@@ -72,7 +72,10 @@ Captions and highlights follow the actual direction of travel, including when
 the geometry is played backward. They explore dimension, equal lengths, volume,
 and the arrangement of regular faces around a vertex.
 Transition captions remain visible through the morph instead of changing with
-every short phase. At normal pace, viewing pauses allow at least five seconds
+every short phase. Each completed object's caption begins with its name.
+Each transition has its own direction-specific caption describing the change,
+with supporting geometry facts, rather than borrowing the destination's caption.
+At normal pace, viewing pauses allow at least five seconds
 and a reading budget based on caption length; the opening point gets a full
 reading pause as well.
 
@@ -90,6 +93,10 @@ reading pause as well.
   direction. At an endpoint, direction turns inward.
 - Scrub the timeline in either direction, including while paused.
 - Choose a playback speed from 0.5x to 2x.
+- The **speaker icon** enables/disables the original soundtrack; every page
+  load starts muted. Use your device's volume controls to adjust loudness.
+  Enabling music joins the current position and does not start a paused animation.
+  Status text appears only while audio is starting or needs attention.
 - Drag to orbit; scroll to zoom. Dragging disables auto-orbit.
 - Focus the canvas and use arrow keys to orbit, plus/minus to zoom.
 - **Auto-orbit** toggles the slow camera movement during playback.
@@ -101,6 +108,59 @@ through one repeating round trip, starting from the center heading right.
 Reduced-motion preferences start at the center paused with auto-orbit disabled;
 playback remains available on request.
 
+## Original soundtrack
+
+Piano and flute lead four original classical movements, supported by strings,
+bass, and light percussion. Each has its own rhythmic and melodic character,
+with shape-completion cadences linking the music to the geometry.
+
+| Journey | Theme and key | Arrangement |
+| --- | --- | --- |
+| Point to Dodecahedron | I. First Light, D major | Flute invocation, then piano-led dotted phrases and growing chords |
+| Dodecahedron to Point | II. The Long Shadow, D minor | Elegiac piano, suspensions, and diminishing ensemble |
+| Point to Icosahedron | III. Air and Water, G major | Flute-led pastoral triplets and expanding string harmony |
+| Icosahedron to Point | IV. Constellations at Rest, G minor | Winding nocturne, softening to open intervals |
+
+Each of the **28 directed shape transitions**, including Point, Line, and
+Triangle, has a MIDI arrival marker. Its cadence and destination instrumentation
+coincide with geometric completion and the new object caption/timeline highlight,
+not the timeline button's viewing-pause center. Face-path intensity follows faces
+even when vertices move in the opposite numerical direction. A sparse solo-flute
+opening gives Point a spacious, expectant character. Quiet flute-led passages
+connect the movements, and ordinary loops retain release tails without
+restarting audio.
+
+The four movements have their own melodic shapes, articulations, and
+accompaniments: a piano-led outward vertex journey, its darker returning
+movement, a contrasting flute-led face journey, and a quieter minor return.
+Long notes, dotted rhythms, short runs, and breathing rests replace a uniform
+stream of equal-length notes. Larger shapes receive fuller piano and string
+chords rather than only faster single notes.
+
+Each outer endpoint has its own composed modulation. Borrowed minor harmony,
+suspensions, and a dominant chord prepare the return's minor tonic, rather than
+switching scales abruptly at the bounce. The vertex and face endpoints use
+different cadential gestures. This is an original composition drawing on
+classical phrasing and orchestration, not a transcription of a game or film score.
+
+Pause releases sound; resume continues at the retained position. Seeking and
+shape clicks cancel obsolete cues, joining the new harmony with a soft entry.
+Paused seeking/reversal stays silent. Reverse uses a forward-playing composition
+in the other key, **never backward audio**. During a mid-morph route redirection,
+the actual timeline and musical progression hold for 1.5 animation seconds
+(scaled by Pace), with a quiet bridge. Double reversals and further seeks cancel
+the abandoned route's audio. Pace changes tempo and note/envelope timing without
+changing pitch. Restart preserves the music on/off choice, returns to quiet
+Point, and starts playback. Hidden tabs freeze geometry and suspend/release audio.
+
+Sound requires Web Audio and an explicit Music-button gesture. If the browser
+blocks or suspends audio, a status message explains the problem; toggle Music to
+retry. Geometry remains usable without audio. No microphone, MIDI-device
+permission, internet connection, samples, soundfonts, or audio downloads are
+needed. The decaying-partial piano, oscillator strings, and flute with soft
+breath and delayed vibrato are intentionally small synthesized instruments,
+**not realistic sampled acoustic instruments**.
+
 ## Implementation
 
 `geometry.js` builds regular solids, matches vertices with minimum-cost
@@ -110,14 +170,66 @@ reflects playback at its endpoints, and computes convex polygonal hulls.
 perspective camera on a high-DPI 2D canvas and handles the timeline and controls.
 `styles.css` contains the responsive layout. Everything runs locally.
 
+`midi.js` validates and decodes the embedded Standard MIDI File, including PPQ
+timing, running status, metadata, and paired note releases. `music.js` derives
+completion times using the same geometry semantics as the captions, maps each
+MIDI arrival interval to its live animation interval, and synthesizes the decoded
+notes with Web Audio. The visual clock remains authoritative: scheduling looks
+ahead at most **80 ms** beyond its latest accepted update, with capped future
+projections, discontinuity generations, bounded 48-voice polyphony, gain ramps,
+and node cleanup. A render stall does not let audio advance indefinitely.
+
+### Score source and regeneration
+
+- `music/becoming.mid` is the canonical six-track, type-1 MIDI score, with
+  section/phrase/arrival markers, key/time signatures, tempo, programs, and
+  explicit releases. It can also be opened independently in a MIDI editor.
+- `music/score-data.js` embeds **exactly the same MIDI bytes** as base64. Classic
+  script loading avoids `file:` fetch restrictions; the browser parses this MIDI,
+  rather than playing a separately maintained JavaScript note list.
+- `music/compose.py` defines the original themes and deterministic arrangement.
+  To regenerate both artifacts with Python 3.10+ (standard library only), run
+  `python music\compose.py` from the project directory. Repeated runs produce
+  byte-identical files. Python is an optional authoring tool, not a playback or
+  deployment requirement.
+
+The canonical MIDI, deliberate base64 duplication, decoder, and player total
+approximately **97 KiB uncompressed**, below the 200 KiB music-asset budget.
+The MIDI contains 2,536 notes. No mandatory build step or Pages
+configuration change is needed; the new files publish with the other static files.
+
+### Regression checks
+
 Open `tests.html` in a browser to run the geometry regression checks, including
 both orders and directions, midpoint and subsegment construction, merging,
 phase boundaries, centered positioning, repeated endpoint bounces, regular final
 faces, and the absence of temporary wireframe diagonals.
+
+Open `music-tests.html` for parser rejection cases, all 28 completion/caption
+arrivals and their instrument layers, expressive note/rest lengths, distinct
+movement contours, prepared endpoint modulations, flute synthesis, changed
+timeline durations, count-based intensity, every pace, repeated complete loops, capped-clock stalls, transport
+cancellation, and OfflineAudioContext sample/voice-cleanup checks. It also tests
+audio failure messages and desktop/narrow playback controls. HTTP hosting allows
+the test page to inspect its application iframe; some browsers isolate `file:`
+iframes, so those control checks are explicitly skipped there. The actual
+application still works by opening `index.html` directly, without browser flags.
+For the complete control suite, optionally run `python -m http.server 8000`
+and open `http://localhost:8000/music-tests.html` with audio allowed. A browser
+that blocks the test's automated Music click instead checks the explicit failure
+message and reports that live audio controls were not exercised. Use a foreground browser;
+headless virtual-time dumping may end before offline rendering finishes.
+
+Offline-rendered excerpts cover the opening, both climaxes, both minor returns,
+endpoint modulations, and the final-to-first seam, checking finite samples,
+conservative levels, and release of all voices. Automated tests **do not
+establish musical quality**. After composition changes, listen for flute/piano
+balance, musical phrasing, endpoint cadences, and the looping seam.
 
 ## License
 
 Copyright (C) 2026 David Smith.
 
 Becoming is licensed under the GNU General Public License, version 2 only
-(`GPL-2.0-only`). See [LICENSE](LICENSE) for the complete terms.
+(`GPL-2.0-only`), including the original composition, MIDI, generated embedding,
+composer, and synthesizer. See [LICENSE](LICENSE) for the complete terms.

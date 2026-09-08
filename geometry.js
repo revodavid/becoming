@@ -171,34 +171,20 @@ window.Geometry = (() => {
     const triangle = [[-r * Math.sqrt(3) / 2, -r / 2, 0], [r * Math.sqrt(3) / 2, -r / 2, 0], [0, r, 0]];
     const definitions = [
       { name: "Point", vertices: 1, edges: 0, faces: 0, kind: "THE ORIGIN", description: "Position, without length, width or depth.", target: [[0, 0, 0]], add: 0, morph: 0, hold: 4,
-        captions: ["A point marks a place.", "It has a position, but no size."] },
+        captions: ["Point. Position without size.", "A point marks a location, with no length, area, or volume."] },
       { name: "Line", vertices: 2, edges: 1, faces: 0, kind: "ONE DIMENSION", description: "Two points. The first connection.", target: [[-0.78, 0, 0], [0.78, 0, 0]], add: 3, morph: 5, hold: 4,
-        adding: ["What does it take to have length?", "Two endpoints give a line segment its extent."],
-        moving: ["Length is our first dimension.", "The shortest path between two points is a straight line segment."],
-        captions: ["The first dimension.", "Two vertices, connected by a single edge."] },
+        captions: ["Line. The first dimension.", "Two endpoints define a line segment: length, without width or depth."] },
       { name: "Triangle", vertices: 3, edges: 3, faces: 1, kind: "TWO DIMENSIONS", description: "Three equal sides open up a plane.", target: triangle, add: 3.5, morph: 6, hold: 5,
-        adding: ["Halfway is a special place.", "A midpoint divides a segment into two equal lengths."],
-        moving: ["Length meets width.", "Three points that are not all on one line enclose an area."],
-        captions: ["Balance, in two dimensions.", "Three equal edges. Three equal angles."] },
+        captions: ["Triangle. Balance in two dimensions.", "Three equal edges. Three equal angles."] },
       { name: "Tetrahedron", vertices: 4, edges: 6, faces: 4, kind: "Platonic Solid I", description: "Four equilateral triangles. The simplest solid.", target: [...triangle.map(p => [p[0], p[1], -h]), [0, 0, 3 * h]], add: 4, morph: 7, hold: 8,
-        adding: ["A midpoint offers a new possibility.", "Halfway along an edge, the distances to its two ends are equal."],
-        moving: ["Beyond the plane lies volume.", "Four points can enclose space when they do not all lie in one plane."],
         captions: ["Tetrahedron. Four faces in perfect balance.", "Three equilateral triangles meet at every vertex."] },
       { name: "Octahedron", vertices: 6, edges: 12, faces: 8, kind: "Platonic Solid III", description: "Eight equilateral triangles, paired at an equator.", target: spherical(octa), add: 4.5, morph: 8, hold: 8,
-        adding: ["How else can triangles enclose space?", "The tetrahedron is only the first of three Platonic solids with triangular faces."],
-        moving: ["A different meeting of triangles.", "In an octahedron, four equilateral triangles meet at each vertex."],
         captions: ["Octahedron. Eight facets, one rhythm.", "Six vertices. Twelve equal edges. Eight equilateral triangles."] },
       { name: "Cube", vertices: 8, edges: 12, faces: 6, kind: "Platonic Solid II", description: "Six squares. A familiar kind of perfection.", target: spherical(cube), add: 4.5, morph: 8, hold: 8,
-        adding: ["More corners need not mean more faces.", "The octahedron has 6 vertices and 8 faces; the cube has 8 vertices and 6 faces."],
-        moving: ["A familiar symmetry takes shape.", "Three square faces meet at each corner of a cube."],
         captions: ["Cube. Six faces, beautifully familiar.", "Eight vertices. Twelve equal edges. Six perfect squares."] },
       { name: "Icosahedron", vertices: 12, edges: 30, faces: 20, kind: "Platonic Solid V", description: "Twenty triangles. A step closer to a sphere.", target: spherical(ico), add: 5.5, morph: 9, hold: 9,
-        adding: ["How many triangles can meet at a corner?", "Five can fold around a vertex; six would lie flat."],
-        moving: ["More faces, the same regularity.", "Five equilateral triangles meet at every vertex of an icosahedron."],
         captions: ["Icosahedron. Twenty windows on symmetry.", "Twelve vertices. Thirty equal edges. Twenty triangular faces."] },
       { name: "Dodecahedron", vertices: 20, edges: 30, faces: 12, kind: "Platonic Solid IV", description: "Twelve pentagons. Three meet at every corner.", target: spherical(dodeca), add: 7, morph: 10, hold: 11,
-        adding: ["One more kind of face is possible.", "Regular pentagons have five equal sides and five equal angles."],
-        moving: ["Five sides to a face. Three faces to a corner.", "Three regular pentagons meet at each vertex of a dodecahedron."],
         captions: ["Dodecahedron. Twelve pentagonal faces.", "Twenty vertices. Thirty equal edges. Twelve regular pentagons."] }
     ];
     definitions.forEach((stage, index) => {
@@ -214,22 +200,43 @@ window.Geometry = (() => {
       stage.topology = hull(stage.target);
     });
 
-    const descendingCopy = [
-      ["Length gives way to position.", "Without separation, two endpoints describe a single place."],
-      ["Area gives way to length.", "A straight segment has length, but no width."],
-      ["From volume back to area.", "A triangle's three vertices always lie in one plane."],
-      ["How few corners can enclose space?", "Four is the minimum for a solid with flat faces."],
-      ["Fewer corners, but more faces.", "The cube has 8 vertices and 6 faces; the octahedron has 6 vertices and 8 faces."],
-      ["A simpler set of corners.", "Twelve vertices become eight; twenty triangular faces give way to six squares."],
-      ["Fewer vertices can mean more faces.", "The dodecahedron has 20 vertices and 12 faces; the icosahedron has 12 vertices and 20 faces."]
-    ];
+    const transitionCaptions = new Map([
+      ["Point", "Line",
+        ["Separation gives rise to length.", "Two endpoints define a segment: length without width."],
+        ["Length gives way to position.", "As the endpoints meet, the segment shrinks to a single location."]],
+      ["Line", "Triangle",
+        ["Length opens into area.", "Moving a vertex off the line opens a triangular region."],
+        ["Area gives way to length.", "As the vertices align, the enclosed region flattens into a segment."]],
+      ["Triangle", "Tetrahedron",
+        ["Beyond the plane lies volume.", "Four vertices enclose volume when they do not all share a plane."],
+        ["From volume back to area.", "As one vertex joins another, the remaining three settle into a single plane."]],
+      ["Tetrahedron", "Octahedron",
+        ["More corners reshape the triangular faces.", "Four vertices become six; four equilateral triangles will meet at each corner."],
+        ["Fewer corners enclose the simplest solid.", "Six vertices become four, the minimum needed to enclose volume with flat faces."]],
+      ["Octahedron", "Cube",
+        ["More corners need not mean more faces.", "Octahedron: 6 vertices, 8 faces. Cube: 8 vertices, 6 faces."],
+        ["Fewer corners, but more faces.", "Eight vertices become six as square faces give way to eight triangles."]],
+      ["Cube", "Icosahedron",
+        ["Squares give way to triangles.", "Eight vertices become twelve; five triangular faces will meet at each new corner."],
+        ["Triangular faces give way to squares.", "Twelve vertices become eight as twenty triangular faces become six square faces."]],
+      ["Icosahedron", "Dodecahedron",
+        ["More corners need not mean more faces.", "Icosahedron: 12 vertices, 20 faces. Dodecahedron: 20 vertices, 12 faces."],
+        ["Fewer vertices can mean more faces.", "Twenty vertices become twelve, while twelve pentagons give way to twenty triangles."]],
+      ["Tetrahedron", "Cube",
+        ["Four faces become six.", "Four vertices become eight as triangular faces give way to squares."],
+        ["Six faces become four.", "Eight vertices become four as square faces give way to triangles."]],
+      ["Octahedron", "Dodecahedron",
+        ["Eight faces become twelve.", "Fourteen new vertices allow triangular faces to become pentagons."],
+        ["Twelve faces become eight.", "Twenty vertices become six as pentagonal faces give way to triangles."]]
+    ].flatMap(([from, to, forward, reverse]) => [
+      [`${from}:${to}`, forward], [`${to}:${from}`, reverse]
+    ]));
     const stages = [];
     const first = definitions[7];
     stages.push({
       ...first, chapter: "vertices", direction: "still", previousCount: first.vertices,
       source: first.target, destination: first.target, sourceTopology: first.topology,
-      fromDimension: 3, seeds: [], add: 0, morph: 0, merge: 0, hold: 10,
-      captions: ["Twenty vertices. A journey toward one.", "First, compare the solids by decreasing vertex count."]
+      fromDimension: 3, seeds: [], add: 0, morph: 0, merge: 0, hold: 10
     });
     for (let i = 6; i >= 0; i--) {
       const smaller = definitions[i], larger = definitions[i + 1];
@@ -239,11 +246,7 @@ window.Geometry = (() => {
         source: larger.target, destination: larger.source, sourceTopology: larger.topology,
         seeds: larger.seeds, add: Math.min(4.5, larger.add), morph: larger.morph,
         merge: Math.max(1.8, (larger.seeds.length - 1) * 0.22 + 0.6),
-        highlighting: descendingCopy[i], moving: descendingCopy[i],
-        pivot: i === 0, hold: i === 0 ? 8 : smaller.hold,
-        captions: i === 0
-          ? ["Back to a point. A new way to compare.", "Now follow increasing face counts: 4, 6, 8, 12, then 20."]
-          : smaller.captions
+        pivot: i === 0, hold: i === 0 ? 8 : smaller.hold
       });
     }
 
@@ -279,22 +282,24 @@ window.Geometry = (() => {
         merge: growing ? 0 : Math.max(1.8, (seeds.length - 1) * 0.22 + 0.6)
       });
     }
-    const faceStages = stages.filter(stage => stage.chapter === "faces");
-    faceStages[3].adding = ["Four faces become six.", "A tetrahedron has four triangular faces; a cube has six square faces."];
-    faceStages[4].highlighting = ["More faces, fewer corners.", "The cube's 6 faces and 8 vertices become the octahedron's 8 faces and 6 vertices."];
-    faceStages[5].adding = ["Eight faces become twelve.", "Face count is increasing, even though the faces themselves change from triangles to pentagons."];
-    faceStages[6].highlighting = ["Twelve faces become twenty.", "The icosahedron has more faces than the dodecahedron, but fewer vertices."];
-    faceStages[6].captions = ["Two orders. The same five solids.", "Vertex count and face count reveal different paths through the Platonic solids."];
     let start = 0;
     stages.forEach((stage, index) => {
       stage.index = index;
       stage.start = start;
       stage.changedStart = Math.min(stage.vertices, stage.previousCount);
       stage.shapeCaptions = definitions.find(shape => shape.name === stage.name).captions;
+      if (index) {
+        const previous = stages[index - 1];
+        stage.forwardCaptions = transitionCaptions.get(`${previous.name}:${stage.name}`);
+        stage.reverseCaptions = transitionCaptions.get(`${stage.name}:${previous.name}`);
+        if (!stage.forwardCaptions || !stage.reverseCaptions) {
+          throw new Error(`Missing transition captions between ${previous.name} and ${stage.name}`);
+        }
+      }
       // Reverse playback uses the first 2.6 seconds of a growth hold to
       // highlight vertices. Keep a full reading pause outside that interval.
       stage.hold = Math.max(stage.hold, captionDuration(stage.shapeCaptions) + (stage.direction === "grow" ? 2.6 : 0));
-      if (stage.pivot) stage.hold = Math.max(stage.hold, 2 * Math.max(captionDuration(originCaption(1)), captionDuration(originCaption(-1))));
+      if (stage.pivot) stage.hold = Math.max(stage.hold, 2 * captionDuration(stage.shapeCaptions));
       stage.duration = stage.add + stage.morph + stage.merge + stage.hold;
       const small = stage.direction === "grow" ? stage.source.slice(0, stage.changedStart) : stage.target;
       const large = stage.direction === "grow" ? stage.target : stage.source;
@@ -413,14 +418,6 @@ window.Geometry = (() => {
     return Math.max(5, 1 + copy.join(" ").trim().split(/\s+/).length / 2.5);
   }
 
-  function originCaption(direction) {
-    return [
-      "One point. Two ways to explore.",
-      direction > 0 ? "To the right, compare the solids by increasing vertex count."
-        : "To the left, compare the solids by increasing face count."
-    ];
-  }
-
   function sampleTimeline(timeline, playback) {
     const stage = timeline.stages.find(s => playback.time < s.start + s.duration)
       || timeline.stages[timeline.stages.length - 1];
@@ -464,18 +461,8 @@ window.Geometry = (() => {
       paths[name] = { increasing, label: playback.direction > 0 ? `${text} \u2192` : `\u2190 ${text}` };
     }
     const increasing = paths[chapter].increasing;
-    let copy = shapeComplete ? displayStage.shapeCaptions : targetStage.shapeCaptions;
-    if (!shapeComplete && playback.direction < 0) {
-      copy = stage.direction === "grow" ? stage.adding : stage.highlighting;
-    } else if (!shapeComplete) {
-      if ((targetStage.vertices - sourceStage.vertices) * (targetStage.faces - sourceStage.faces) < 0) {
-        copy = [
-          targetStage.vertices > sourceStage.vertices ? "More corners need not mean more faces." : "More faces need not mean more corners.",
-          `${sourceStage.name}: ${sourceStage.vertices} vertices, ${sourceStage.faces} faces. ${targetStage.name}: ${targetStage.vertices} vertices, ${targetStage.faces} faces.`
-        ];
-      }
-    }
-    if (atCenter) copy = originCaption(playback.direction);
+    const copy = shapeComplete ? displayStage.shapeCaptions
+      : playback.direction > 0 ? stage.reverseCaptions : stage.forwardCaptions;
     return { ...frame, geometryPhase, phase, displayStage, targetStage, shapeComplete, node, position, chapter, increasing, paths, motion, focus, copy };
   }
 

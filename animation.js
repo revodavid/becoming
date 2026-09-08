@@ -14,6 +14,55 @@
     width: 0, height: 0, nodeIndex: -1, labelKey: "", lastFrame: null, topologyKey: "",
     topology: null, redirect: null, completedShape: null
   };
+  let musicRequested = false;
+  let musicToggle = 0;
+  function updateMusicButton(enabled) {
+    const label = enabled ? "Mute music" : "Unmute music";
+    $("music").setAttribute("aria-pressed", String(enabled));
+    $("music").setAttribute("aria-label", label);
+    $("music").title = label;
+  }
+  const music = window.Music ? new window.Music.Player(timeline, {
+    status(text, error) {
+      const showStatus = error || (musicRequested && !music.enabled) ||
+        (music.enabled && music.context.state !== "running" && !document.hidden);
+      $("music-status").textContent = showStatus ? text : "";
+      $("music-status").hidden = !showStatus;
+      $("music-status").classList.toggle("error", error);
+      if (error && !music.enabled) {
+        musicRequested = false;
+        updateMusicButton(false);
+      }
+    }
+  }) : null;
+  // Read-only snapshots support diagnostics without exposing the visual transport.
+  window.BecomingMusic = music;
+  function syncMusic(discontinuity = false) {
+    if (!music) return;
+    try { music.update({ ...state, hidden: document.hidden }, discontinuity); }
+    catch (error) {
+      music.disable(); musicRequested = false;
+      updateMusicButton(false);
+      music.report("Music stopped after an audio error. Toggle Music to retry.", error);
+    }
+  }
+  if (!music) {
+    $("music").disabled = true;
+    $("music-status").textContent = "Music unavailable: soundtrack scripts could not load.";
+    $("music-status").hidden = false;
+  }
+  $("music").addEventListener("click", async () => {
+    if (!music) return;
+    const toggle = ++musicToggle;
+    musicRequested = !musicRequested;
+    if (musicRequested) {
+      syncMusic();
+      await music.enable();
+      if (toggle !== musicToggle) return;
+      musicRequested = music.enabled;
+    } else music.disable();
+    updateMusicButton(music.enabled);
+  });
   const colors = { green: [181, 229, 191], gold: [242, 199, 126] };
   const rgba = (rgb, alpha) => `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`;
   const formatTime = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
@@ -53,6 +102,7 @@
     $("play-text").textContent = playing ? "Pause" : "Play";
     $("play-icon").innerHTML = playing ? "&#10074;&#10074;" : "&#9654;";
     $("play").setAttribute("aria-label", playing ? "Pause animation" : "Play animation");
+    syncMusic(true);
   }
 
   function setOrbit(enabled) {
@@ -66,6 +116,7 @@
     state.redirect = null;
     state.completedShape = null;
     state.topologyKey = "";
+    syncMusic(true);
   }
 
   $("play").addEventListener("click", () => setPlaying(!state.playing));
@@ -77,6 +128,7 @@
       ? { points: before.points, elapsed: 0 } : null;
     state.lastFrame = null;
     updateLabels(sample());
+    syncMusic(true);
   });
   $("restart").addEventListener("click", () => {
     state.direction = 1;
@@ -87,7 +139,7 @@
     setPlaying(true);
   });
   $("seek").addEventListener("input", event => seek(Number(event.target.value)));
-  $("speed").addEventListener("change", event => { state.speed = Number(event.target.value); });
+  $("speed").addEventListener("change", event => { state.speed = Number(event.target.value); syncMusic(true); });
   $("orbit").addEventListener("click", () => setOrbit(!state.orbit));
   $("reset-view").addEventListener("click", () => {
     state.yaw = -0.16;
@@ -158,7 +210,10 @@
     event.preventDefault();
     $("play").click();
   });
-  document.addEventListener("visibilitychange", () => { state.lastFrame = null; });
+  document.addEventListener("visibilitychange", () => {
+    state.lastFrame = null;
+    if (music) music.visibility(document.hidden);
+  });
 
   function resize() {
     const rect = canvas.getBoundingClientRect();
@@ -372,6 +427,7 @@
       }
       updateLabels(frame);
       draw(frame);
+      syncMusic();
     }
     requestAnimationFrame(tick);
   }

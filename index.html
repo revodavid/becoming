@@ -7,6 +7,9 @@
   <title>Becoming / A study of Platonic solids</title>
   <link rel="stylesheet" href="styles.css">
   <script src="geometry.js" defer></script>
+  <script src="music/score-data.js" defer></script>
+  <script src="midi.js" defer></script>
+  <script src="music.js" defer></script>
   <script src="animation.js" defer></script>
 </head>
 <body>
@@ -31,8 +34,8 @@
         <div class="shape-stats" id="shape-stats"></div>
       </div>
       <div class="scene-caption">
-        <p id="caption">One point. Two ways to explore.</p>
-        <span id="caption-detail">To the right, compare the solids by increasing vertex count.</span>
+        <p id="caption">Point. Position without size.</p>
+        <span id="caption-detail">A point marks a location, with no length, area, or volume.</span>
       </div>
       <div class="view-tools">
         <button id="orbit" class="quiet-button" type="button" aria-pressed="true"><span class="orbit-icon" aria-hidden="true">&#8635;</span> Auto-orbit</button>
@@ -63,6 +66,13 @@
           <span class="timecode" title="Position in one complete repeating bounce cycle"><span id="travel-direction" aria-label="Moving right">&rarr;</span> <span id="elapsed">0:00</span><span class="time-divider">/</span><span id="duration">0:00</span></span>
         </div>
         <div class="transport-right">
+          <button id="music" class="quiet-button" type="button" aria-pressed="false" aria-label="Unmute music" title="Unmute music" aria-describedby="music-status">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M11 5 6 9H3v6h3l5 4Z"></path>
+              <path class="speaker-muted" d="m16 9 6 6m0-6-6 6"></path>
+              <path class="speaker-playing" d="M15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"></path>
+            </svg>
+          </button>
           <label for="speed">PACE</label>
           <select id="speed" aria-label="Playback speed">
             <option value="0.5">0.5&times; &middot; Reflective</option>
@@ -72,6 +82,7 @@
           </select>
         </div>
       </div>
+      <p id="music-status" class="music-status" role="status" aria-live="polite" hidden></p>
     </section>
   </main>
   <footer><span>Copyright &copy; 2026 David Smith. Many uses permitted under GPL-2 license.</span><span>Created by <a href="https://github.com/revodavid/becoming">@revodavid</a>, GitHub Copilot CLI, and GPT-6 Astra</span></footer>

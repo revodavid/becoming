@@ -81,6 +81,13 @@ h2 { font: 400 31px Georgia, "Times New Roman", serif; letter-spacing: -.03em; m
 #travel-direction { color: var(--green); margin-right: 4px; }
 .time-divider { padding: 0 9px; color: #577063; }
 .transport-right { gap: 13px; }
+.transport { flex-wrap: wrap; gap: 12px; }
+.transport-right { flex-wrap: wrap; margin-left: auto; }
+#music { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; padding: 8px; }
+#music[aria-pressed="true"] { color: var(--green); }
+#music[aria-pressed="false"] .speaker-playing, #music[aria-pressed="true"] .speaker-muted { display: none; }
+.music-status { margin: 8px 0 0; min-height: 14px; text-align: right; color: var(--muted); font-size: 10px; }
+.music-status.error { color: var(--gold); }
 .transport-right label { font-size: 8px; letter-spacing: .17em; color: var(--muted); }
 select { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; color: var(--text); font-size: 11px; }
 footer { display: flex; justify-content: space-between; margin: 26px 4% 17px; color: #83978a; font-size: 8px; letter-spacing: .13em; }
@@ -126,6 +133,7 @@ footer a:hover { color: var(--green); }
   .time-divider { padding: 0 4px; }
   #travel-direction { margin-right: 0; }
   .transport-right { gap: 0; margin-left: auto; }
+  #music { margin-right: 10px; }
   select { max-width: 120px; padding: 7px 3px; font-size: 10px; }
   footer { font-size: 7px; margin-top: 24px; gap: 16px; }
   footer span:last-child { max-width: 140px; text-align: right; }

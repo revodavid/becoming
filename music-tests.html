@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Becoming / Music checks</title>
+<h1>Music checks</h1>
+<pre id="results">Running...</pre>
+<script src="geometry.js"></script>
+<script src="music/score-data.js"></script>
+<script src="midi.js"></script>
+<script src="music.js"></script>
+<script>
+"use strict";
+(async () => {
+  const messages = [], assert = (ok, text) => { if (!ok) throw new Error(text); };
+  messages.push = (...items) => {
+    Array.prototype.push.apply(messages, items);
+    document.getElementById("results").textContent = messages.join("\n");
+  };
+  const near = (a, b, tolerance = 1e-6) => Math.abs(a - b) < tolerance;
+  const fails = (fn, text) => { let failed = false; try { fn(); } catch (_) { failed = true; } assert(failed, text); };
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const G = Geometry, M = Music, timeline = G.makeTimeline();
+  let app;
+  try {
+    const bytes = Midi.decode(BecomingScore), score = Midi.parse(bytes), model = M.makeModel(timeline, score);
+    assert(score.format === 1 && score.tracks === 6 && score.ppq === 480, "Type 1, six tracks including flute, PPQ");
+    assert(score.programs.some(p => p.channel === 3 && p.program === 73), "Dedicated MIDI flute instrument");
+    assert(score.markers.filter(m => m.name.startsWith("arrival:")).length === 28, "28 authored arrivals");
+    assert(JSON.stringify(score.keys.map(k => [k.sharps, k.minor])) === "[[2,0],[-1,1],[1,0],[-2,1]]", "Four expected key signatures");
+    assert(score.notes.every(n => n.endTick > n.tick && n.velocity > 0), "Paired positive notes");
+    const firstNotes = model.notes.filter(n => n.tick === 0);
+    assert(firstNotes.length > 0 && firstNotes.every(n => n.instrument === "flute"), "Sparse opening begins with flute alone");
+    const sectionMarkers = score.markers.filter(m => m.name.startsWith("section:"));
+    const leadContours = [];
+    for (let i = 0; i < sectionMarkers.length; i++) {
+      const start = sectionMarkers[i].tick, end = sectionMarkers[i + 1]?.tick ?? score.endTick;
+      const leadChannel = i < 2 ? 0 : 3;
+      const lead = score.notes.filter(n => n.channel === leadChannel && n.tick >= start && n.tick < end);
+      assert(lead.length > 12, "Each movement develops its lead melody");
+      const lengths = new Set(lead.map(n => n.endTick - n.tick));
+      assert(lengths.size >= 5, "Each movement varies note lengths rather than using one metronomic pulse");
+      let until = lead[0].endTick, rests = 0;
+      for (const note of lead.slice(1)) {
+        if (note.tick - until >= score.ppq / 4) rests++;
+        until = Math.max(until, note.endTick);
+      }
+      assert(rests >= 2, "Each melody has audible breathing rests");
+      leadContours.push(lead.slice(0, 16).map(n => n.pitch - lead[0].pitch).join(","));
+    }
+    assert(new Set(leadContours).size === 4, "Four separately shaped movements, not transposed copies");
+    for (const [letter, sectionName, dominant] of [["A", "A-return", [9, 1, 7]], ["B", "B-return", [2, 6, 0]]]) {
+      const turn = name => score.markers.find(m => m.name === `turn:${letter}:${name}`);
+      const start = turn("start"), pivot = turn("dominant"), resolve = turn("resolve");
+      const boundary = sectionMarkers.find(m => m.name === `section:${sectionName}`);
+      assert(start && pivot && resolve && start.tick < pivot.tick && pivot.tick < resolve.tick &&
+        resolve.tick === boundary.tick, "Endpoint has a prepared modulation, dominant, and minor resolution");
+      const harmony = score.notes.filter(n => n.channel !== 9 && n.tick <= pivot.tick + score.ppq / 8 &&
+        n.endTick > pivot.tick + score.ppq / 8).map(n => n.pitch % 12);
+      assert(dominant.every(pitch => harmony.includes(pitch)), "Cadential dominant prepares the new minor tonic");
+    }
+    for (let i = 1; i < model.anchors.length; i++) {
+      const a = model.anchors[i - 1], b = model.anchors[i];
+      const tempo = (b.tick - a.tick) / score.ppq / (b.position - a.position) * 60;
+      assert(tempo >= 80 && tempo <= 110, "Comfortable phrase tempo without abrupt stretching");
+    }
+    assert(score.seconds(score.endTick) > 300, "Standalone tempo positions");
+    for (const n of [0, 8, 14, bytes.length - 1]) fails(() => Midi.parse(bytes.slice(0, n)), "Reject truncated MIDI");
+    const corrupt = bytes.slice(); corrupt[12] = 0x80;
+    fails(() => Midi.parse(corrupt), "Reject SMPTE timing");
+    const zero = bytes.slice(); zero[12] = zero[13] = 0;
+    fails(() => Midi.parse(zero), "Reject zero PPQ");
+    const trailing = new Uint8Array(bytes.length + 1); trailing.set(bytes);
+    fails(() => Midi.parse(trailing), "Reject trailing corruption");
+    const vlq = n => { const r = [n & 127]; while (n >>= 7) r.unshift((n & 127) | 128); return r; };
+    const text = s => [...s].map(c => c.charCodeAt(0));
+    const chunk = (name, data) => [...text(name), 0, 0, data.length >> 8, data.length & 255, ...data];
+    const meta = (delta, kind, value) => [...vlq(delta), 255, kind, ...vlq(value.length), ...value];
+    const conductor = [
+      ...meta(0, 0x51, [9, 137, 104]),
+      ...meta(0, 6, text("section:A-out")),
+      ...meta(120, 6, text("section:A-return")),
+      ...meta(120, 6, text("section:B-out")),
+      ...meta(120, 6, text("section:B-return")),
+      ...meta(120, 6, text("end")), ...meta(0, 0x2F, [])
+    ];
+    const fixture = notes => Uint8Array.from([...chunk("MThd", [0, 1, 0, 2, 1, 224]),
+      ...chunk("MTrk", conductor), ...chunk("MTrk", notes)]);
+    const running = [0, 0xC0, 0, 0, 0x90, 60, 40, 120, 60, 0,
+      ...meta(0, 0x7F, [1, 2, 3]), ...meta(360, 0x2F, [])];
+    assert(Midi.parse(fixture(running)).notes.length === 1, "Running status, zero-velocity off, program, unknown metadata");
+    fails(() => Midi.parse(fixture([0, 0x90, 60, 40, ...meta(480, 0x2F, [])])), "Reject hanging note");
+    fails(() => Midi.parse(fixture([0, 0x80, 60, 0, ...meta(480, 0x2F, [])])), "Reject unmatched off");
+    fails(() => Midi.parse(fixture([0, 60, 40, ...meta(480, 0x2F, [])])), "Reject missing running status");
+    fails(() => Midi.parse(fixture([0x81, 0x81, 0x81, 0x81, 0, 0x90, 60, 40])), "Reject overlong VLQ");
+    messages.push(`PASS: MIDI parser, malformed inputs, metadata and ${score.notes.length} released notes`);
+
+    for (const arrival of model.arrivals) {
+      const before = G.sampleTimeline(timeline, { time: arrival.time + arrival.direction * 1e-5, direction: arrival.direction });
+      const after = G.sampleTimeline(timeline, { time: arrival.time - arrival.direction * 1e-5, direction: arrival.direction });
+      assert(!(before.shapeComplete && before.displayStage.index === arrival.index), arrival.name + " not early");
+      assert(after.shapeComplete && after.displayStage.index === arrival.index, arrival.name + " completed caption/highlight");
+      assert(after.copy === after.displayStage.shapeCaptions, arrival.name + " object caption");
+      assert(near(model.positionAtTick(arrival.tick), arrival.position), arrival.name + " musical arrival coincides");
+      const notes = model.notes.filter(n => near(n.start, arrival.position));
+      assert(notes.some(n => ["piano", "flute"].includes(n.instrument)), arrival.name + " explicit melodic arrival");
+      const stage = timeline.stages[arrival.index], path = arrival.leg[0] === "A" ? "vertices" : "faces";
+      const count = stage[path];
+      assert(notes.some(n => n.instrument === "strings") === (count >= 6), arrival.name + " destination strings");
+      assert(notes.some(n => n.instrument === "bass") === (count >= 4), arrival.name + " destination bass");
+      assert(notes.some(n => n.instrument === "percussion") === (count >= 12), arrival.name + " destination percussion");
+      if (count >= 6) {
+        assert(new Set(notes.filter(n => n.instrument !== "percussion").map(n => n.pitch % 12)).size >= 3,
+          arrival.name + " fuller chordal arrival");
+      }
+    }
+    for (const stage of timeline.stages.slice(8)) {
+      const time = stage.start + stage.add + stage.morph * 0.5;
+      for (const direction of [-1, 1]) {
+        const value = M.intensity(timeline, { time, direction });
+        assert(value.path === "faces" && near(value.count, (stage.faces + timeline.stages[stage.index - 1].faces) / 2), "Face intensity follows faces during growth AND vertex removal");
+      }
+    }
+    for (let i = 0; i < 4; i++) {
+      const position = (model.boundaries[i] + model.boundaries[i + 1]) / 2;
+      const state = G.advanceLoop(timeline, { time: timeline.center.time, direction: 1 }, position);
+      assert(M.section(timeline, state) === ["A-out", "A-return", "B-out", "B-return"][i], "Physical direction selects key");
+    }
+    for (const [time, right, left] of [
+      [timeline.minTime, "A-out", "A-return"],
+      [timeline.center.time - 1e-5, "A-out", "A-return"],
+      [timeline.center.time, "A-out", "B-out"],
+      [timeline.center.time + 1e-5, "B-return", "B-out"],
+      [timeline.maxTime, "B-return", "B-out"]
+    ]) {
+      assert(M.section(timeline, { time, direction: 1 }) === right, "Rightward endpoint/center mapping");
+      assert(M.section(timeline, { time, direction: -1 }) === left, "Leftward endpoint/center mapping");
+    }
+    const changed = G.makeStages();
+    let start = 0;
+    changed.forEach(s => { s.start = start; s.hold += 2; s.duration += 2; start += s.duration; });
+    const retimed = M.makeModel(G.makeTimeline(changed), score);
+    assert(retimed.timeline.period !== timeline.period && retimed.arrivals.length === 28, "Mapping recomputes changed durations");
+    for (const a of retimed.arrivals) assert(near(retimed.positionAtTick(a.tick), a.position), "Retimed arrivals");
+    const badMarkers = { ...score, markers: score.markers.filter(m => !m.name.startsWith("arrival:A-out:6")) };
+    fails(() => M.makeModel(timeline, badMarkers), "Reject absent arrival marker");
+    const missingOpening = { ...score, notes: score.notes.filter(n => n.tick !== 0) };
+    fails(() => M.makeModel(timeline, missingOpening), "Reject missing section melody before a reverse bridge can use it");
+    messages.push("PASS: four distinct movements, flute opening, expressive rhythms/rests, prepared endpoint modulations, and 28 chordal completion cues");
+
+    // A deterministic audio-clock double exercises the actual scheduler without
+    // allocating an entire multi-minute audio rendering for every pace.
+    for (const speed of [0.5, 1, 1.5, 2]) {
+      const context = { currentTime: 0, state: "running" };
+      const scheduled = [], released = [];
+      const player = new M.Player(timeline, { manual: true, onSchedule: e => scheduled.push(e) });
+      player.context = context; player.model = model; player.enabled = true;
+      player.synth = { voices: new Set(), voice: (note, when, duration, strength, token) => ({ end: when + duration, token }),
+        releaseAll: () => released.push(context.currentTime) };
+      let state = { time: timeline.center.time, direction: 1, speed, playing: true };
+      player.update(state, true);
+      const step = 0.05;
+      const total = timeline.period * 2.05 / speed;
+      for (let now = step; now < total; now += step) {
+        context.currentTime = now;
+        state = { ...state, ...G.advanceLoop(timeline, state, step * speed) };
+        player.update(state);
+      }
+      const unique = new Set(scheduled.map(e => `${Math.round(e.position * 1e6)}:${e.note.id}`));
+      assert(unique.size === scheduled.length, "No duplicate notes over repeated wraps at pace " + speed);
+      assert(scheduled.length >= model.notes.length * 2, "No missing cycle at pace " + speed);
+      for (let cycle = 0; cycle < 2; cycle++) {
+        for (const n of model.notes) assert(scheduled.some(e => e.note.id === n.id && near(e.position, n.start + cycle * timeline.period)), "Every note across both cycles");
+      }
+      assert(scheduled.every(e => Math.abs(e.when - (e.position / speed)) < 0.001), "Stable audio/visual timing across cycles");
+      assert(player.stats.maxError <= M.HORIZON, "Reconciled clock tolerance");
+      assert(player.generation === 1, "Ordinary wraps never cancel release tails or restart transport");
+      const generation = player.generation;
+      context.currentTime += 0.4;
+      state = { ...state, ...G.advanceLoop(timeline, state, 0.1 * speed) };
+      player.update(state);
+      assert(player.generation > generation && player.stats.lastError > 0.1, "Delayed frame reanchors capped visual clock");
+      const last = scheduled.length;
+      context.currentTime += 0.2; player.pump();
+      assert(scheduled.length === last, "No extrapolation beyond horizon");
+      for (const patch of [{ playing: false }, { direction: -state.direction, redirect: true },
+        { playing: true }, { direction: state.direction }, { redirect: false }, { speed: 2 },
+        { time: timeline.center.time }, { hidden: true }, { hidden: false }]) {
+        state = { ...state, ...patch };
+        const old = player.generation;
+        player.update(state, true);
+        assert(player.generation > old, "Discontinuity cancels pending generation");
+        if (!state.playing || state.hidden || state.redirect) assert(player.scheduled.size === 0, "No queued notes while held");
+      }
+      player.disable();
+      assert(player.timer === null && player.scheduled.size === 0 && released.length > 0, "Disabled scheduler cleanup");
+    }
+    messages.push("PASS: all paces, two complete cycles each, every note/seam, stalls, pause, redirects and cancellation");
+
+    const Offline = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    assert(Offline, "OfflineAudioContext available");
+    const excerpts = [0, model.arrivals.find(a => a.name === "arrival:A-out:0").position, model.boundaries[1] + 2,
+      model.arrivals.find(a => a.name === "arrival:B-out:14").position, model.boundaries[3] + 2, timeline.period - 2,
+      ...["A", "B"].map(letter => model.positionAtTick(score.markers.find(m => m.name === `turn:${letter}:start`).tick))];
+    const peaks = [];
+    for (const position of excerpts) {
+      const context = new Offline(1, 6 * 24000, 24000), synth = M.createSynth(context);
+      for (const cycle of [0, 1]) {
+        for (const note of model.notes) {
+          const when = note.start + cycle * timeline.period - position;
+          if (when >= 0 && when < 3) synth.voice(note, when, Math.min(note.duration, 1.5), 0.6);
+        }
+      }
+      assert(synth.voices.size <= M.MAX_VOICES, "Bounded voice allocation");
+      const buffer = await context.startRendering(), samples = buffer.getChannelData(0);
+      let peak = 0, energy = 0, tail = 0;
+      for (let i = 0; i < samples.length; i++) {
+        assert(Number.isFinite(samples[i]), "Finite rendered samples");
+        peak = Math.max(peak, Math.abs(samples[i])); energy += samples[i] * samples[i];
+        if (i > samples.length - 2400) tail = Math.max(tail, Math.abs(samples[i]));
+      }
+      assert(peak > 0.00001 && peak < 0.8 && energy > 0, "Audible, conservative synthesized excerpt");
+      assert(tail < 1e-6 && synth.voices.size === 0, "Released samples and disconnected voices");
+      peaks.push(peak.toFixed(4)); synth.dispose();
+    }
+    assert(Number(peaks[0]) < Number(peaks[1]) / 2 && Number(peaks[0]) < Number(peaks[3]) / 2, "Quiet Point versus both climaxes");
+    const context = new Offline(1, 24000, 24000), synth = M.createSynth(context);
+    for (let i = 0; i < 100; i++) synth.voice({ instrument: "piano", pitch: 48 + i % 36, velocity: 50 }, 0.1, 0.3, 0.5);
+    assert(synth.voices.size === M.MAX_VOICES, "Stress polyphony cap");
+    synth.releaseAll(); await context.startRendering();
+    assert(synth.voices.size === 0, "Cancelled future voices removed");
+    synth.dispose();
+    const changing = new Offline(1, 2 * 24000, 24000), changingSynth = M.createSynth(changing);
+    changingSynth.voice({ instrument: "piano", pitch: 62, velocity: 50 }, 0, 1.5, 0.5, 1);
+    changingSynth.voice({ instrument: "piano", pitch: 66, velocity: 50 }, 1, 0.6, 0.5, 1);
+    const suspended = changing.suspend(0.25), rendering = changing.startRendering();
+    await suspended;
+    changingSynth.releaseAll();
+    assert([...changingSynth.voices].every(v => v.start <= changing.currentTime), "Cancelled future major cue cannot survive reverse");
+    changingSynth.voice({ instrument: "strings", pitch: 62, velocity: 22 }, changing.currentTime, 0.15, 0, 2);
+    await changing.resume();
+    const changedSamples = (await rendering).getChannelData(0);
+    assert(changedSamples.every(Number.isFinite) && changedSamples.slice(24000).every(n => n === 0), "Mid-render pause/reverse bridge releases without late notes");
+    assert(changingSynth.voices.size === 0, "Transport-change render disconnects all voices");
+    changingSynth.dispose();
+    messages.push("PASS: OfflineAudioContext opening/climaxes/minor returns/seam, finite samples, cleanup; peaks " + peaks.join(", "));
+    const fluteContext = new Offline(1, 2 * 24000, 24000), fluteSynth = M.createSynth(fluteContext);
+    fluteSynth.voice({ instrument: "flute", pitch: 74, velocity: 40 }, 0, 0.8);
+    const fluteSamples = (await fluteContext.startRendering()).getChannelData(0);
+    assert(fluteSamples.every(Number.isFinite) && fluteSamples.some(n => Math.abs(n) > 0.0001), "Flute synthesis produces finite audible samples");
+    assert(fluteSamples.slice(36000).every(n => n === 0) && fluteSynth.voices.size === 0, "Flute vibrato and breath sources fully release");
+    fluteSynth.dispose();
+
+    const originalAudio = window.AudioContext, originalWebkit = window.webkitAudioContext;
+    const originalScore = window.BecomingScore;
+    const errors = [];
+    let failurePlayer;
+    try {
+      window.BecomingScore = "broken";
+      failurePlayer = new M.Player(timeline, { status: (text, error) => { if (error) errors.push(text); } });
+      assert(!await failurePlayer.enable() && errors.length === 1, "Decode failure is explicit");
+      window.BecomingScore = originalScore;
+      window.AudioContext = window.webkitAudioContext = undefined;
+      failurePlayer = new M.Player(timeline, { status: (text, error) => { if (error) errors.push(text); } });
+      assert(!await failurePlayer.enable() && errors.at(-1).includes("not supported"), "Unavailable Web Audio is graceful");
+      window.AudioContext = function () { throw new Error("Test initialization blocked"); };
+      failurePlayer = new M.Player(timeline, { status: (text, error) => { if (error) errors.push(text); } });
+      assert(!await failurePlayer.enable() && errors.at(-1).includes("initialization blocked"), "Initialization failure is explicit");
+      const blocked = new Offline(1, 24000, 24000);
+      blocked.resume = () => Promise.reject(new Error("Test resume denied"));
+      failurePlayer = new M.Player(timeline, { context: blocked, status: (text, error) => { if (error) errors.push(text); } });
+      assert(!await failurePlayer.enable() && errors.at(-1).includes("resume denied"), "Rejected resume is explicit");
+      await failurePlayer.dispose();
+    } finally {
+      window.AudioContext = originalAudio; window.webkitAudioContext = originalWebkit;
+      window.BecomingScore = originalScore;
+    }
+    messages.push("PASS: decode, unavailable audio, initialization and resume failures remain silent and explicit");
+
+    app = document.createElement("iframe"); app.src = "index.html"; app.title = "Playback integration checks";
+    app.width = "1200"; app.height = "800";
+    await new Promise((resolve, reject) => {
+      app.onload = resolve; app.onerror = reject; document.body.appendChild(app);
+    });
+    const w = app.contentWindow, d = app.contentDocument, $ = id => d.getElementById(id);
+    // file: iframes may be isolated by browser policy; direct file operation is
+    // separately exercised by opening index.html. HTTP permits integration checks.
+    if (!d) {
+      messages.push("SKIP: same-origin iframe controls under file: isolation (run via HTTP)");
+    } else {
+      await wait(80);
+      const player = w.BecomingMusic;
+      assert(player && !player.enabled && !player.context, "Silent default, no eager context");
+      if ($("play-text").textContent === "Pause") $("play").click();
+      const paused = player.snapshot.anchor.time;
+      assert(!$("volume") && d.querySelectorAll("#music").length === 1, "One speaker button and no volume slider");
+      assert($("music").getAttribute("aria-label") === "Unmute music" && $("music-status").hidden, "Accessible muted default without repeated status text");
+      assert(w.getComputedStyle(d.querySelector(".speaker-playing")).display === "none", "Muted speaker icon on load");
+      $("music").click(); await wait(150);
+      for (let attempt = 0; attempt < 45 && !player.enabled && $("music-status").textContent.includes("Starting"); attempt++) await wait(100);
+      if (player.enabled) {
+        assert($("music").getAttribute("aria-pressed") === "true" && player.snapshot.voices === 0, "Enabling while paused remains silent");
+        assert($("music").getAttribute("aria-label") === "Mute music" && $("music-status").hidden, "Unmuted button label without repeated status text");
+        assert(w.getComputedStyle(d.querySelector(".speaker-muted")).display === "none", "Speaker icon reflects enabled music");
+        assert(near(player.snapshot.anchor.time, paused), "Enable does not move geometry");
+        $("seek").value = 9.5; $("seek").dispatchEvent(new w.Event("input", { bubbles: true }));
+        const at = player.snapshot.anchor.time;
+        $("reverse").click();
+        assert(player.snapshot.anchor.redirect && !player.snapshot.anchor.playing, "Paused mid-transition reverse holds");
+        assert(near(player.snapshot.anchor.time, at), "Reverse retains actual timeline");
+        $("reverse").click();
+        $("seek").value = 4.5; $("seek").dispatchEvent(new w.Event("input", { bubbles: true }));
+        assert(!player.snapshot.anchor.redirect && player.snapshot.scheduled === 0, "Seek cancels double reversal while paused");
+        for (const speed of [0.5, 1, 1.5, 2]) {
+          $("speed").value = speed; $("speed").dispatchEvent(new w.Event("change", { bubbles: true }));
+          assert(player.snapshot.anchor.speed === speed && !player.snapshot.anchor.playing, "Pace preserves pause");
+        }
+        d.querySelectorAll(".stage-button")[12].click();
+        assert(!player.snapshot.anchor.playing && player.snapshot.scheduled === 0, "Paused stage click");
+        $("restart").click();
+        assert(player.enabled && player.snapshot.anchor.playing, "Restart preserves music choice");
+        assert(near(player.snapshot.anchor.time, timeline.center.time), "Restart at quiet Point");
+        $("seek").value = 9.5; $("seek").dispatchEvent(new w.Event("input", { bubbles: true }));
+        $("reverse").click();
+        const held = player.snapshot.anchor.time;
+        assert(player.snapshot.anchor.redirect && player.snapshot.scheduled === 0, "Running redirect cancels abandoned cues");
+        await wait(250);
+        assert(near(player.snapshot.anchor.time, held) && player.snapshot.anchor.redirect, "Actual clock held during 1.5-second route redirection");
+        await wait(850);
+        assert(!player.snapshot.anchor.redirect && !near(player.snapshot.anchor.time, held), "Timeline and music resume after redirection at 2x");
+        $("reverse").click(); $("reverse").click();
+        for (let i = 0; i < 25; i++) {
+          $("seek").value = 2 + i * 0.4;
+          $("seek").dispatchEvent(new w.Event("input", { bubbles: true }));
+        }
+        assert(!player.snapshot.anchor.redirect && player.snapshot.voices <= M.MAX_VOICES, "Continuous scrubbing cancels redirect and bounds voices");
+        await player.visibility(true);
+        assert(player.snapshot.scheduled === 0 && player.context.state === "suspended" && player.snapshot.voices === 0, "Hidden context suspension without retained voices");
+        await player.visibility(false);
+        assert(player.context.state === "running", "Visibility resume");
+        $("music").click(); $("restart").click();
+        assert(!player.enabled && $("music").getAttribute("aria-pressed") === "false", "Restart never unmutes");
+        assert($("music").getAttribute("aria-label") === "Unmute music" && $("music-status").hidden, "Muted button label restored without status repetition");
+        $("music").click(); $("music").click(); $("music").click(); await wait(80);
+        assert(player.enabled && $("music").getAttribute("aria-pressed") === "true", "Rapid toggles respect latest user intent");
+        messages.push("PASS: speaker icon/no volume slider/pause/seek/stage/reverse/double reverse/pace/restart/visibility");
+      } else {
+        assert($("music-status").textContent.includes("unavailable"), "Blocked audio has explicit status");
+        assert(!$("music-status").hidden, "Audio errors remain visible");
+        messages.push("PASS: browser blocked untrusted audio enable, explicit error; use autoplay flag for full controls");
+      }
+      app.width = "360"; await wait(50);
+      assert(d.documentElement.scrollWidth <= 360, "Narrow layout no page overflow");
+      const button = $("music").getBoundingClientRect(), pace = $("speed").getBoundingClientRect();
+      assert(button.right <= pace.left && pace.right <= 360, "Narrow speaker and pace controls do not overlap");
+      await player.dispose();
+    }
+    document.body.dataset.result = "pass";
+    messages.push("ALL MUSIC CHECKS PASSED. Perceptual listening review still required.");
+  } catch (error) {
+    document.body.dataset.result = "fail";
+    messages.push("FAIL: " + error.stack);
+    if (app?.contentDocument && app.contentWindow.BecomingMusic) await app.contentWindow.BecomingMusic.dispose();
+  }
+  document.getElementById("results").textContent = messages.join("\n");
+})();
+</script>
+</html>
