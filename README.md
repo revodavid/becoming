@@ -5,6 +5,18 @@ A slow, interactive 3D study of two ways to order the five Platonic solids.
 Open **index.html** in a modern browser. No installation, build, server, network
 connection, or external libraries are required.
 
+## Live site and deployment
+
+Visit **[revodavid.github.io/becoming](https://revodavid.github.io/becoming/)**.
+
+GitHub Pages automatically publishes the repository root after each push to
+`main`. The repository's **Settings > Pages** uses **Deploy from a branch** with
+`main` and `/ (root)` as the source. The `.nojekyll` file disables Jekyll processing,
+so the HTML, CSS, and JavaScript are published directly without a build step.
+
+To publish an update, commit the changes and run `git push origin main`.
+Deployment progress is available in the repository's Actions tab.
+
 ## The journey
 
 The single-row timeline has one shared **point at its center**, with the
