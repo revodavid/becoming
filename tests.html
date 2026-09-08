@@ -23,7 +23,7 @@ try {
   equal(stages.map(s => s.name), [
     "Dodecahedron", "Icosahedron", "Cube", "Octahedron", "Tetrahedron", "Triangle", "Line", "Point",
     "Line", "Triangle", "Tetrahedron", "Cube", "Octahedron", "Dodecahedron", "Icosahedron"
-  ], "Complete journey");
+  ], "Stored construction sequence");
   assert(stages.filter(s => s.pivot).length === 1, "Exactly one point pivot");
   messages.push("PASS: both orders and one shared pivot");
 
@@ -104,6 +104,83 @@ try {
   assert(largeGrowth.seeds.some(seed => seed.edge.some(i => i >= largeGrowth.previousCount)), "Repeated bisection is exercised");
   const duration = stages.reduce((sum, stage) => sum + stage.duration, 0);
   messages.push("PASS: 14-vertex growth bisects existing subsegments; duration " + duration.toFixed(2) + " seconds");
+
+  const timeline = G.makeTimeline(stages);
+  equal(timeline.nodes.map(node => node.stage.name), [
+    "Icosahedron", "Dodecahedron", "Octahedron", "Cube", "Tetrahedron", "Triangle", "Line", "Point",
+    "Line", "Triangle", "Tetrahedron", "Octahedron", "Cube", "Icosahedron", "Dodecahedron"
+  ], "Single-row node order");
+  assert(timeline.center.index === 7 && timeline.nodes.filter(node => node.stage.name === "Point").length === 1,
+    "One point at the exact center");
+  for (let p = 0; p <= 14; p += 0.125) {
+    assert(Math.abs(G.timeToPosition(timeline, G.positionToTime(timeline, p)) - p) < 1e-10, "Timeline position round trip");
+  }
+  for (const node of timeline.nodes) {
+    for (const direction of [-1, 1]) {
+      const frame = G.sampleTimeline(timeline, { time: node.time, direction });
+      assert(frame.phase === "holding", "Node click lands on a viewing pause");
+      assert(frame.node.index === node.index, "Node click selects the correct solid");
+    }
+  }
+  let playback = { time: timeline.center.time, direction: 1, elapsed: 0 };
+  const initial = G.sampleTimeline(timeline, playback);
+  assert(initial.displayStage.name === "Point" && initial.position === 7 && initial.chapter === "vertices", "Start at point heading right");
+  assert(G.advanceLoop(timeline, playback, 0).elapsed === 0, "Loop clock starts at zero");
+  const right = G.advanceLoop(timeline, playback, timeline.center.time - timeline.minTime);
+  assert(Math.abs(right.time - timeline.minTime) < 1e-9 && right.direction === -1, "Right endpoint bounce");
+  const left = G.advanceLoop(timeline, right, timeline.maxTime - timeline.minTime);
+  assert(Math.abs(left.time - timeline.maxTime) < 1e-9 && left.direction === 1, "Left endpoint bounce");
+  const full = G.advanceLoop(timeline, playback, timeline.period * 100);
+  assert(Math.abs(full.time - playback.time) < 1e-8 && full.direction === 1 && full.elapsed < 1e-8, "Repeated loops preserve position and direction");
+  for (const time of [timeline.minTime, timeline.center.time, timeline.maxTime, ...timeline.nodes.map(node => node.time)]) {
+    for (const direction of [-1, 1]) {
+      const before = { time, direction };
+      const after = G.reverseLoop(timeline, before);
+      assert(after.time === before.time && after.direction === -direction, "Manual reverse changes direction without moving");
+      const restored = G.reverseLoop(timeline, after);
+      assert(restored.time === time && restored.direction === direction, "Two reversals restore direction and position");
+      const a = G.sampleTimeline(timeline, before), b = G.sampleTimeline(timeline, after);
+      equal(a.points, b.points, "Manual reverse preserves exact geometry");
+      equal(a.visibility, b.visibility, "Manual reverse preserves point visibility");
+      equal([...a.edges], [...b.edges], "Manual reverse preserves the wireframe");
+      const advanced = G.advanceLoop(timeline, after, 0.1);
+      assert(advanced.time >= timeline.minTime && advanced.time <= timeline.maxTime, "Manual reversal respects endpoint bounces");
+    }
+  }
+  for (const before of [
+    { time: timeline.minTime + 0.1, direction: 1 },
+    { time: timeline.maxTime - 0.1, direction: -1 }
+  ]) {
+    const after = G.advanceLoop(timeline, before, 0.2);
+    assert(Math.abs(before.time - after.time) < 1e-9 && before.direction === -after.direction, "Bounce preserves overshoot");
+    const a = G.sampleTimeline(timeline, before), b = G.sampleTimeline(timeline, after);
+    assert(a.points.every((p, i) => near(p, b.points[i])), "Geometry remains continuous across a bounce");
+  }
+  const visited = [];
+  for (let elapsed = 0; elapsed <= timeline.period; elapsed += 0.25) {
+    const state = G.advanceLoop(timeline, playback, elapsed);
+    const frame = G.sampleTimeline(timeline, state);
+    equal(frame.paths.vertices.label, state.direction > 0 ? "Increasing vertices \u2192" : "\u2190 Decreasing vertices",
+      "Vertex heading follows travel direction");
+    equal(frame.paths.faces.label, state.direction > 0 ? "Decreasing faces \u2192" : "\u2190 Increasing faces",
+      "Face heading follows travel direction");
+    assert(frame.increasing === frame.paths[frame.chapter].increasing, "Active direction agrees with its path heading");
+    assert(state.time >= timeline.minTime - 1e-9 && state.time <= timeline.maxTime + 1e-9, "Playback stays on the timeline");
+    assert(frame.copy.length === 2 && frame.copy.every(text => typeof text === "string" && text.length), "Direction-aware learner captions");
+    assert(frame.copy.every(text => !/first.*decreasing|now follow increasing face/i.test(text)), "No obsolete chapter narration");
+    const original = G.sampleStage(frame.stage, state.time - frame.stage.start);
+    assert(frame.points.every((p, i) => near(p, original.points[i])), "Reverse playback preserves exact geometry");
+    equal(frame.visibility, original.visibility, "Reverse playback preserves midpoint arrivals and removals");
+    if (frame.phase === "holding") {
+      assert(frame.points.length === frame.displayStage.vertices, "Reverse hold labels match the visible solid");
+      if (visited[visited.length - 1] !== frame.node.index) visited.push(frame.node.index);
+    }
+    if (frame.phase === "adding") assert(frame.motion === "grow", "Reverse addition has the correct legend");
+    if (frame.phase === "merging") assert(frame.motion === "shrink", "Reverse merging has the correct legend");
+  }
+  equal(visited, [7,8,9,10,11,12,13,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0,1,2,3,4,5,6,7], "Complete continuous bounce itinerary");
+  messages.push("PASS: one centered row, both directions, reverse captions, exact bounces, 100 loops and the full itinerary");
+  messages.push("PASS: both path headings follow direction; manual reversal preserves geometry and position, including at endpoints");
   document.getElementById("results").textContent = messages.join("\n");
   document.documentElement.dataset.result = "passed";
 } catch (error) {

@@ -21,44 +21,47 @@
       <div class="introduction">
         <p class="eyebrow">TWO ORDERS. FIVE PERFECT SOLIDS.</p>
         <h1>Everything<br>takes shape.</h1>
-        <p class="intro-copy">From a solid to a point, and outward again.<br>Two ways to discover the same five solids.</p>
+        <p class="intro-copy">One shared origin. Two paths through geometry.<br>A journey that unfolds, returns, and begins again.</p>
       </div>
       <div class="phase-indicator"><span id="phase-dot"></span><span id="phase-label">A moment to admire</span></div>
       <div class="shape-info" aria-live="polite" aria-atomic="true">
-        <p class="eyebrow" id="shape-category">PLATONIC SOLID / 01</p>
-        <h2 id="shape-name">Dodecahedron</h2>
-        <p id="shape-description">Twelve pentagons. Three meet at every corner.</p>
+        <p class="eyebrow" id="shape-category">THE ORIGIN / 08</p>
+        <h2 id="shape-name">Point</h2>
+        <p id="shape-description">Position, without length, width or depth.</p>
         <div class="shape-stats" id="shape-stats"></div>
       </div>
       <div class="scene-caption">
-        <p id="caption">Twenty vertices. A journey toward one.</p>
-        <span id="caption-detail">First, compare the solids by decreasing vertex count.</span>
+        <p id="caption">One point. Two ways to explore.</p>
+        <span id="caption-detail">To the right, compare the solids by increasing vertex count.</span>
       </div>
       <div class="view-tools">
         <button id="orbit" class="quiet-button" type="button" aria-pressed="true"><span class="orbit-icon" aria-hidden="true">&#8635;</span> Auto-orbit</button>
         <button id="reset-view" class="quiet-button" type="button">Reset view</button>
         <span class="drag-hint">DRAG TO ROTATE &middot; SCROLL TO ZOOM</span>
       </div>
-      <div class="legend"><span class="legend-dot existing"></span> Existing <span class="legend-dot added"></span> <span id="highlight-label">Merging points</span></div>
+      <div class="legend"><span class="legend-dot existing"></span> Existing <span class="legend-dot added"></span> <span id="highlight-label">New points</span></div>
     </section>
 
     <section class="playback" aria-label="Animation playback">
-      <div class="timeline-heading"><span class="eyebrow">TWO WAYS TO COMPARE</span><span class="timeline-note" id="order-note">First: decreasing vertex count.</span></div>
-      <div class="timeline-chapter active" id="chapter-vertices">
-        <div class="chapter-heading"><span>01 / BY VERTICES</span><span>20 &rarr; 1</span></div>
-        <div class="stage-navigation" id="stages-vertices" role="group" aria-label="Descending vertex count: dodecahedron to point"></div>
+      <div class="timeline-heading"><span class="eyebrow">ONE ORIGIN. TWO PATHS.</span><span class="timeline-note" id="order-note">Increasing vertices &rarr;</span></div>
+      <div class="timeline-scroll" id="timeline-scroll">
+        <div class="timeline-track">
+          <div class="path-labels">
+            <span id="path-faces">DECREASING FACES &rarr;</span>
+            <span class="origin-label">ORIGIN</span>
+            <span id="path-vertices" class="active">INCREASING VERTICES &rarr;</span>
+          </div>
+          <div class="stage-navigation" id="stages" role="group" aria-label="Single timeline: icosahedron, through the shared point, to dodecahedron"></div>
+          <label class="sr-only" for="seek">Timeline position</label>
+          <input id="seek" class="seek" type="range" min="0" max="14" step="0.001" value="7">
+        </div>
       </div>
-      <div class="timeline-chapter" id="chapter-faces">
-        <div class="chapter-heading"><span>02 / BY FACES</span><span>POINT &rarr; 20 FACES</span></div>
-        <div class="stage-navigation" id="stages-faces" role="group" aria-label="Increasing face count: point to icosahedron"></div>
-      </div>
-      <label class="sr-only" for="seek">Animation position</label>
-      <input id="seek" class="seek" type="range" min="0" max="100" step="0.01" value="0">
       <div class="transport">
         <div class="transport-left">
           <button id="play" class="play-button" type="button" aria-label="Pause animation"><span id="play-icon" aria-hidden="true">&#10074;&#10074;</span><span id="play-text">Pause</span></button>
-          <button id="restart" class="quiet-button" type="button" aria-label="Restart animation">&#8634; <span>Restart</span></button>
-          <span class="timecode"><span id="elapsed">0:00</span><span class="time-divider">/</span><span id="duration">0:00</span></span>
+          <button id="reverse" class="quiet-button" type="button" aria-label="Reverse direction to move left" title="Reverse direction to move left"><span aria-hidden="true">&#8646;</span> Reverse</button>
+          <button id="restart" class="quiet-button" type="button" aria-label="Restart from the center point, moving right">&#8634; <span>Restart</span></button>
+          <span class="timecode" title="Position in one complete repeating bounce cycle"><span id="travel-direction" aria-label="Moving right">&rarr;</span> <span id="elapsed">0:00</span><span class="time-divider">/</span><span id="duration">0:00</span></span>
         </div>
         <div class="transport-right">
           <label for="speed">PACE</label>
@@ -72,7 +75,7 @@
       </div>
     </section>
   </main>
-  <footer><span>SPACE &rarr; POINT &rarr; SPACE</span><span>Created by <a href="https://github.com/revodavid/becoming">@revodavid</a>, GitHub Copilot CLI, and GPT-6 Astra</span></footer>
+  <footer><span>SPACE &harr; POINT &harr; SPACE</span><span>Created by <a href="https://github.com/revodavid/becoming">@revodavid</a>, GitHub Copilot CLI, and GPT-6 Astra</span></footer>
   <noscript>This animation needs JavaScript enabled in your browser.</noscript>
 </body>
 </html>

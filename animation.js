@@ -2,46 +2,56 @@
 
 (() => {
   const G = window.Geometry;
-  const stages = G.makeStages();
-  const total = stages.reduce((sum, stage) => sum + stage.duration, 0);
+  const timeline = G.makeTimeline();
   const $ = id => document.getElementById(id);
   const canvas = $("scene"), ctx = canvas.getContext("2d");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const state = {
-    time: 0, playing: !reducedMotion.matches, speed: 1, orbit: !reducedMotion.matches,
+    time: timeline.center.time, direction: 1, elapsed: 0,
+    playing: !reducedMotion.matches, speed: 1, orbit: !reducedMotion.matches,
     yaw: -0.16, pitch: 0.12, zoom: 1, orbitAngle: 0, dragging: false,
-    width: 0, height: 0, stageIndex: -1, phase: "", lastFrame: null, topologyKey: "",
+    width: 0, height: 0, nodeIndex: -1, labelKey: "", lastFrame: null, topologyKey: "",
     topology: null
   };
   const colors = { green: [181, 229, 191], gold: [242, 199, 126] };
   const rgba = (rgb, alpha) => `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`;
   const formatTime = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
-  const stageButtons = [];
-  function addStageButton(stage, chapter) {
+  const stageButtons = timeline.nodes.map(node => {
+    const stage = node.stage;
     const button = document.createElement("button");
     button.type = "button";
     button.className = "stage-button";
-    const count = chapter === "vertices" ? `${stage.vertices} ${stage.vertices === 1 ? "vertex" : "vertices"}`
+    button.classList.toggle("pivot", stage.pivot === true);
+    const chapter = node.index < timeline.center.index ? "faces" : "vertices";
+    const count = stage.pivot ? "Shared origin" : chapter === "vertices" ? `${stage.vertices} ${stage.vertices === 1 ? "vertex" : "vertices"}`
       : `${stage.faces} ${stage.faces === 1 ? "face" : "faces"}`;
-    const jumpTime = stage.pivot ? stage.start + stage.add + stage.morph + stage.merge : stage.start;
-    button.innerHTML = `<span class="stage-index">${String(stage.index + 1).padStart(2, "0")}</span><span><span class="stage-title">${stage.name}</span><span class="stage-count">${count}</span></span>`;
-    button.setAttribute("aria-label", `${chapter === "vertices" ? "Descending vertices" : "Increasing faces"}: ${stage.name}, ${count}. Jump to ${formatTime(jumpTime)}.`);
-    button.addEventListener("click", () => seek(jumpTime));
-    $(`stages-${chapter}`).appendChild(button);
-    stageButtons.push({ button, index: stage.index });
-  }
-  stages.forEach(stage => {
-    addStageButton(stage, stage.chapter);
-    if (stage.pivot) addStageButton(stage, "faces");
+    button.innerHTML = `<span class="stage-title">${stage.name}</span><span class="stage-count">${count}</span>`;
+    button.setAttribute("aria-label", stage.pivot ? "Point, the shared center of both paths."
+      : `${chapter === "vertices" ? "Vertex-count path" : "Face-count path"}: ${stage.name}, ${count}.`);
+    button.addEventListener("click", () => seek(node.index));
+    $("stages").appendChild(button);
+    return button;
   });
-  $("seek").max = total;
-  $("duration").textContent = formatTime(total);
+  $("seek").max = timeline.nodes.length - 1;
+  $("seek").value = timeline.center.index;
+  $("duration").textContent = formatTime(timeline.period);
+
+  function revealNode(index, center = false) {
+    const button = stageButtons[index], scroller = $("timeline-scroll");
+    if (!button) return;
+    const left = button.offsetLeft, right = left + button.offsetWidth;
+    if (center || left < scroller.scrollLeft || right > scroller.scrollLeft + scroller.clientWidth) {
+      scroller.scrollLeft = left + button.offsetWidth / 2 - scroller.clientWidth / 2;
+    }
+  }
+  new ResizeObserver(() => revealNode(state.nodeIndex < 0 ? timeline.center.index : state.nodeIndex, true))
+    .observe($("timeline-scroll"));
 
   function setPlaying(playing) {
     state.playing = playing;
-    $("play-text").textContent = playing ? "Pause" : state.time >= total ? "Replay" : "Play";
+    $("play-text").textContent = playing ? "Pause" : "Play";
     $("play-icon").innerHTML = playing ? "&#10074;&#10074;" : "&#9654;";
-    $("play").setAttribute("aria-label", playing ? "Pause animation" : state.time >= total ? "Replay animation" : "Play animation");
+    $("play").setAttribute("aria-label", playing ? "Pause animation" : "Play animation");
   }
 
   function setOrbit(enabled) {
@@ -49,18 +59,26 @@
     $("orbit").setAttribute("aria-pressed", String(enabled));
   }
 
-  function seek(time) {
-    state.time = Math.max(0, Math.min(total, time));
+  function seek(position) {
+    const time = G.positionToTime(timeline, position);
+    Object.assign(state, G.advanceLoop(timeline, { time, direction: state.direction }, 0));
     state.topologyKey = "";
-    if (state.time >= total) setPlaying(false);
-    else setPlaying(state.playing);
   }
 
-  $("play").addEventListener("click", () => {
-    if (state.time >= total) seek(0);
-    setPlaying(!state.playing);
+  $("play").addEventListener("click", () => setPlaying(!state.playing));
+  $("reverse").addEventListener("click", () => {
+    Object.assign(state, G.reverseLoop(timeline, state));
+    state.lastFrame = null;
+    updateLabels(sample());
   });
-  $("restart").addEventListener("click", () => { seek(0); setPlaying(true); });
+  $("restart").addEventListener("click", () => {
+    state.direction = 1;
+    seek(timeline.center.index);
+    state.elapsed = 0;
+    state.lastFrame = null;
+    revealNode(timeline.center.index, true);
+    setPlaying(true);
+  });
   $("seek").addEventListener("input", event => seek(Number(event.target.value)));
   $("speed").addEventListener("change", event => { state.speed = Number(event.target.value); });
   $("orbit").addEventListener("click", () => setOrbit(!state.orbit));
@@ -148,50 +166,54 @@
   resize();
 
   function sample() {
-    const stage = stages.find(s => state.time < s.start + s.duration) || stages[stages.length - 1];
-    return G.sampleStage(stage, state.time - stage.start);
+    return G.sampleTimeline(timeline, state);
   }
 
   function updateLabels(frame) {
-    const { stage, phase } = frame;
-    if (state.stageIndex !== stage.index) {
-      state.topologyKey = "";
-      $("shape-category").textContent = `${stage.kind} / ${String(stage.index + 1).padStart(2, "0")}`;
-      $("shape-name").textContent = stage.name;
-      $("shape-description").textContent = stage.description;
-      $("shape-stats").innerHTML = [["vertices", stage.vertices], ["edges", stage.edges], ["faces", stage.faces]]
+    const { displayStage: shape, phase, node, chapter, increasing } = frame;
+    if (state.nodeIndex !== node.index) {
+      $("shape-category").textContent = `${shape.kind} / ${String(node.index + 1).padStart(2, "0")}`;
+      $("shape-name").textContent = shape.name;
+      $("shape-description").textContent = shape.description;
+      $("shape-stats").innerHTML = [["vertices", shape.vertices], ["edges", shape.edges], ["faces", shape.faces]]
         .map(([label, count]) => `<div class="stat"><strong>${count}</strong><span>${label.toUpperCase()}</span></div>`).join("");
-      stageButtons.forEach(({ button, index }) => {
-        button.classList.toggle("active", index === stage.index);
-        if (index === stage.index) button.setAttribute("aria-current", "step");
+      stageButtons.forEach((button, index) => {
+        button.classList.toggle("active", index === node.index);
+        if (index === node.index) button.setAttribute("aria-current", "step");
         else button.removeAttribute("aria-current");
       });
+      if (document.activeElement !== $("seek")) revealNode(node.index);
     }
-    if (state.stageIndex !== stage.index || state.phase !== phase) {
-      const copy = phase === "adding" ? stage.adding : phase === "highlighting" ? stage.highlighting
-        : phase === "moving" ? stage.moving : stage.captions;
-      $("caption").textContent = copy[0];
-      $("caption-detail").textContent = copy[1];
+    const labelKey = `${node.index}:${phase}:${state.direction}:${chapter}`;
+    if (state.labelKey !== labelKey) {
+      $("caption").textContent = frame.copy[0];
+      $("caption-detail").textContent = frame.copy[1];
       $("phase-label").textContent = phase === "moving" ? "Transforming" : phase === "merging" ? "Points meeting" : "A moment to admire";
       document.querySelector(".phase-indicator").classList.toggle("adding", ["adding", "highlighting", "merging"].includes(phase));
-      $("shape-stats").setAttribute("aria-label", `${phase === "holding" ? "Shape" : "Destination"}: ${stage.vertices} vertices, ${stage.edges} edges, ${stage.faces} faces`);
-      const chapter = stage.pivot && phase === "holding" ? "faces" : stage.chapter;
-      $("chapter-vertices").classList.toggle("active", chapter === "vertices");
-      $("chapter-faces").classList.toggle("active", chapter === "faces");
-      $("order-note").textContent = chapter === "vertices" ? "First: decreasing vertex count." : "Then: increasing face count.";
-      $("highlight-label").textContent = stage.direction === "shrink" || chapter === "vertices" ? "Merging points" : "New points";
+      $("shape-stats").setAttribute("aria-label", `${phase === "holding" ? "Shape" : "Destination"}: ${shape.vertices} vertices, ${shape.edges} edges, ${shape.faces} faces`);
+      $("path-vertices").classList.toggle("active", chapter === "vertices");
+      $("path-faces").classList.toggle("active", chapter === "faces");
+      $("path-vertices").textContent = frame.paths.vertices.label.toUpperCase();
+      $("path-faces").textContent = frame.paths.faces.label.toUpperCase();
+      $("order-note").textContent = frame.paths[chapter].label;
+      $("travel-direction").textContent = state.direction > 0 ? "\u2192" : "\u2190";
+      $("travel-direction").setAttribute("aria-label", state.direction > 0 ? "Moving right" : "Moving left");
+      const reverseLabel = `Reverse direction to move ${state.direction > 0 ? "left" : "right"}`;
+      $("reverse").setAttribute("aria-label", reverseLabel);
+      $("reverse").title = reverseLabel;
+      $("highlight-label").textContent = frame.motion === "shrink" ? "Merging points" : "New points";
     }
-    state.stageIndex = stage.index;
-    state.phase = phase;
+    state.nodeIndex = node.index;
+    state.labelKey = labelKey;
     if (phase === "adding" || phase === "highlighting") {
-      const arrived = frame.arrivals.filter(value => value >= 0.5).length;
-      const label = `${phase === "adding" ? "New points" : "Vertices in focus"}: ${arrived} / ${stage.seeds.length}`;
+      const arrived = frame.focus.filter(value => value >= 0.5).length;
+      const label = `${phase === "adding" ? "New points" : "Vertices in focus"}: ${arrived} / ${frame.stage.seeds.length}`;
       if ($("phase-label").textContent !== label) $("phase-label").textContent = label;
     }
-    $("seek").value = state.time;
-    $("seek").style.setProperty("--progress", `${state.time / total * 100}%`);
-    $("seek").setAttribute("aria-valuetext", `${formatTime(state.time)} of ${formatTime(total)}. ${stage.chapter === "vertices" ? "Descending vertices" : "Increasing faces"}. ${stage.name}, ${phase}.`);
-    $("elapsed").textContent = formatTime(state.time);
+    $("seek").value = frame.position;
+    $("seek").style.setProperty("--progress", `${frame.position / (timeline.nodes.length - 1) * 100}%`);
+    $("seek").setAttribute("aria-valuetext", `${shape.name}. Moving ${state.direction > 0 ? "right" : "left"}, ${increasing ? "increasing" : "decreasing"} ${chapter}. ${phase}.`);
+    $("elapsed").textContent = formatTime(state.elapsed);
   }
 
   function draw(frame) {
@@ -199,7 +221,7 @@
     const mobile = w <= 640;
     const center = [w * (mobile ? 0.5 : 0.625), h * (mobile ? 0.385 : 0.43)];
     const unit = Math.min(h * (mobile ? 0.125 : 0.225), w * (mobile ? 0.225 : 0.17)) * state.zoom;
-    const { stage, phase, points, progress, local, depthReveal } = frame;
+    const { stage, geometryPhase: phase, points, progress, local, depthReveal } = frame;
     // Take the shortest turn back to a face-on plane when leaving three dimensions.
     const orbitYaw = Math.atan2(Math.sin(state.orbitAngle), Math.cos(state.orbitAngle));
     const yaw = state.yaw + orbitYaw * depthReveal;
@@ -323,9 +345,8 @@
     const dt = state.lastFrame === null ? 0 : Math.min((timestamp - state.lastFrame) / 1000, 0.1);
     state.lastFrame = timestamp;
     if (!document.hidden) {
-      if (state.playing) {
-        state.time = Math.min(total, state.time + dt * state.speed);
-        if (state.time >= total) setPlaying(false);
+      if (state.playing && dt > 0) {
+        Object.assign(state, G.advanceLoop(timeline, state, dt * state.speed));
       }
       const frame = sample();
       if (state.orbit && state.playing && !state.dragging && frame.stage.fromDimension === 3 && frame.stage.dimension === 3) {

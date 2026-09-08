@@ -292,6 +292,7 @@ window.Geometry = (() => {
       stage.start = start;
       stage.duration = stage.add + stage.morph + stage.merge + stage.hold;
       stage.changedStart = Math.min(stage.vertices, stage.previousCount);
+      stage.shapeCaptions = definitions.find(shape => shape.name === stage.name).captions;
       start += stage.duration;
     });
     return stages;
@@ -339,5 +340,116 @@ window.Geometry = (() => {
     const fromDepth = stage.fromDimension === 3 ? 1 : 0, toDepth = stage.dimension === 3 ? 1 : 0;
     return { stage, local, phase, progress, points, arrivals, visibility, emphasis, edges, depthReveal: fromDepth + (toDepth - fromDepth) * progress };
   }
-  return { add, sub, scale, dot, cross, length, normalize, lerp, distance2, smooth, rotate, hull, makeStages, sampleStage };
+
+  function makeTimeline(stages = makeStages()) {
+    const nodes = [...stages].reverse().map((stage, index) => ({
+      index, stage,
+      time: stage.start + stage.add + stage.morph + stage.merge
+        + (stage.direction === "grow" ? Math.max(stage.hold / 2, 2.8) : stage.hold / 2)
+    }));
+    const center = nodes.find(node => node.stage.pivot);
+    const minTime = nodes[nodes.length - 1].time, maxTime = nodes[0].time;
+    return { stages, nodes, center, minTime, maxTime, period: 2 * (maxTime - minTime) };
+  }
+
+  function positionToTime(timeline, position) {
+    const p = Math.max(0, Math.min(timeline.nodes.length - 1, position));
+    const index = Math.min(Math.floor(p), timeline.nodes.length - 2);
+    const a = timeline.nodes[index].time, b = timeline.nodes[index + 1].time;
+    return a + (b - a) * (p - index);
+  }
+
+  function timeToPosition(timeline, time) {
+    if (time >= timeline.maxTime) return 0;
+    for (let i = 0; i < timeline.nodes.length - 1; i++) {
+      const a = timeline.nodes[i].time, b = timeline.nodes[i + 1].time;
+      if (time >= b) return i + (a - time) / (a - b);
+    }
+    return timeline.nodes.length - 1;
+  }
+
+  function advanceLoop(timeline, playback, delta) {
+    const span = timeline.maxTime - timeline.minTime;
+    const x = timeline.maxTime - playback.time;
+    const phase = playback.direction > 0 ? x : timeline.period - x;
+    let next = ((phase + delta) % timeline.period + timeline.period) % timeline.period;
+    if (Math.abs(next - span) < 1e-9) next = span;
+    else if (Math.min(next, timeline.period - next) < 1e-9) next = 0;
+    const distance = next <= span ? next : timeline.period - next;
+    const origin = timeline.maxTime - timeline.center.time;
+    const elapsed = (next - origin + timeline.period) % timeline.period;
+    return {
+      time: timeline.maxTime - distance,
+      direction: next < span ? 1 : -1,
+      elapsed: Math.min(elapsed, timeline.period - elapsed) < 1e-9 ? 0 : elapsed
+    };
+  }
+
+  function reverseLoop(timeline, playback) {
+    const direction = -playback.direction;
+    return { ...advanceLoop(timeline, { time: playback.time, direction }, 0), time: playback.time, direction };
+  }
+
+  function sampleTimeline(timeline, playback) {
+    const stage = timeline.stages.find(s => playback.time < s.start + s.duration)
+      || timeline.stages[timeline.stages.length - 1];
+    const frame = sampleStage(stage, playback.time - stage.start);
+    const geometryPhase = frame.phase;
+    let displayStage = stage, phase = geometryPhase;
+    let motion = stage.direction;
+    let focus = frame.arrivals;
+    // The timeline runs opposite to the stored construction sequence. Reverse
+    // its geometry exactly, but describe the action the viewer is now seeing.
+    if (playback.direction > 0 && stage.direction !== "still") {
+      motion = stage.direction === "grow" ? "shrink" : "grow";
+      const holdTime = frame.local - stage.add - stage.morph - stage.merge;
+      const reverseHighlight = geometryPhase === "holding" && stage.direction === "grow" && holdTime < 2.6;
+      if (geometryPhase !== "holding" || reverseHighlight) {
+        displayStage = timeline.stages[stage.index - 1];
+      }
+      if (reverseHighlight) {
+        phase = "highlighting";
+        focus = frame.emphasis.slice(stage.changedStart);
+      } else if (geometryPhase === "highlighting") phase = "holding";
+      else if (geometryPhase === "merging") {
+        phase = "adding";
+        focus = frame.visibility.slice(stage.changedStart);
+      } else if (geometryPhase === "adding") phase = "merging";
+    }
+    const node = timeline.nodes[timeline.nodes.length - 1 - displayStage.index];
+    const position = timeToPosition(timeline, playback.time);
+    const atCenter = displayStage.pivot && phase === "holding";
+    const chapter = atCenter ? (playback.direction > 0 ? "vertices" : "faces")
+      : position < timeline.center.index ? "faces" : "vertices";
+    const paths = {};
+    for (const name of ["faces", "vertices"]) {
+      const increasing = name === "vertices" ? playback.direction > 0 : playback.direction < 0;
+      const text = `${increasing ? "Increasing" : "Decreasing"} ${name}`;
+      paths[name] = { increasing, label: playback.direction > 0 ? `${text} \u2192` : `\u2190 ${text}` };
+    }
+    const increasing = paths[chapter].increasing;
+    let copy = displayStage.shapeCaptions;
+    if (playback.direction < 0) {
+      if (phase === "adding") copy = stage.adding;
+      else if (phase === "highlighting") copy = stage.highlighting;
+      else if (phase === "moving") copy = stage.moving;
+    } else if (phase === "adding" || phase === "highlighting") {
+      if ((displayStage.vertices - stage.vertices) * (displayStage.faces - stage.faces) < 0) {
+        copy = [
+          displayStage.vertices > stage.vertices ? "More corners need not mean more faces." : "More faces need not mean more corners.",
+          `${stage.name}: ${stage.vertices} vertices, ${stage.faces} faces. ${displayStage.name}: ${displayStage.vertices} vertices, ${displayStage.faces} faces.`
+        ];
+      }
+    }
+    if (atCenter) copy = [
+      "One point. Two ways to explore.",
+      playback.direction > 0 ? "To the right, compare the solids by increasing vertex count."
+        : "To the left, compare the solids by increasing face count."
+    ];
+    return { ...frame, geometryPhase, phase, displayStage, node, position, chapter, increasing, paths, motion, focus, copy };
+  }
+  return {
+    add, sub, scale, dot, cross, length, normalize, lerp, distance2, smooth, rotate, hull,
+    makeStages, sampleStage, makeTimeline, positionToTime, timeToPosition, advanceLoop, reverseLoop, sampleTimeline
+  };
 })();

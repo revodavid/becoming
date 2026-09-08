@@ -7,16 +7,28 @@ connection, or external libraries are required.
 
 ## The journey
 
-**Descending vertices:** dodecahedron (20) -> icosahedron (12) -> cube (8) ->
-octahedron (6) -> tetrahedron (4) -> triangle (3) -> line (2) -> point (1).
+The single-row timeline has one shared **point at its center**, with the
+icosahedron at the far left and the dodecahedron at the far right.
 
-**Increasing faces:** point -> line -> triangle -> tetrahedron (4) -> cube (6) ->
+**To the right, increasing vertices:** point (1) -> line (2) -> triangle (3) ->
+tetrahedron (4) -> octahedron (6) -> cube (8) -> icosahedron (12) -> dodecahedron (20).
+
+**To the left, increasing faces:** point -> line -> triangle -> tetrahedron (4) -> cube (6) ->
 octahedron (8) -> dodecahedron (12) -> icosahedron (20).
 
-The two chapters share one pause at the point. Both timeline rows link to that
-same moment; the animation does not repeat it. Vertex counts appear in the first
-row, and face counts in the second. The point and line have no faces; the triangle
-has one planar face before the three-dimensional solids begin.
+On page load, playback begins at the center point and travels right. At the
+dodecahedron it reverses, retraces the vertex path to the point, then continues
+left along the face path to the icosahedron. It reverses there and repeats
+continuously. Endpoint viewing pauses are shared across each bounce rather than
+doubled. Passing through the origin never restarts the loop or skips a path.
+
+Vertex counts appear on the right and face counts on the left. The point and line
+have no faces; the triangle has one planar face before the solids begin. On narrow
+screens, the timeline stays on one row and scrolls horizontally, following the
+active shape. The center point is initially centered in the visible area.
+Both path headings and their arrows reflect the current travel direction: moving
+left decreases vertices on the right-hand path and increases faces on the left;
+moving right does the opposite.
 
 When gaining vertices, new points appear at existing edge midpoints before all
 vertices move into position. The initial point-to-line duplication is the only
@@ -27,7 +39,7 @@ still begins halfway between two vertices already present.
 When losing vertices, the construction is reversed: highlighted vertices move
 onto edge midpoints, then fade into those edges in reverse birth order. Surviving
 vertices move smoothly too. The line's two endpoints finally coincide as a point.
-The face-count chapter includes merging as well as growth: more faces need not
+The face-count path includes merging as well as growth: more faces need not
 mean more vertices.
 
 Each transition has a point-introduction or highlighting pause, a slow morph,
@@ -38,15 +50,19 @@ destination edges, never temporary hull triangulation diagonals. Final faces
 are actual polygons. Original edges fade early during growth, and late during
 merging so the reverse construction remains visible.
 The statistics describe the destination shape during a transition.
-Captions explore geometric ideas such as dimension, equal lengths, volume, and
-the arrangement of regular faces around a vertex.
+Captions and highlights follow the actual direction of travel, including when
+the geometry is played backward. They explore dimension, equal lengths, volume,
+and the arrangement of regular faces around a vertex.
 
 ## Controls
 
 - **Play / Pause**, or **Space** outside form controls.
-- **Restart** to return to the beginning.
-- Click a shape in either chapter to jump to its transition; both point entries
-  jump directly to the shared point pause. Playback state is preserved.
+- **Reverse** to switch travel direction at the current position without changing
+  whether playback is running or paused. Endpoint bounces still keep the loop
+  within the timeline.
+- **Restart** to return to the shared point, reset the loop clock, and play rightward.
+- Click any shape to jump to its viewing pause, preserving playback state and
+  direction. At an endpoint, direction turns inward.
 - Scrub the timeline in either direction, including while paused.
 - Choose a playback speed from 0.5x to 2x.
 - Drag to orbit; scroll to zoom. Dragging disables auto-orbit.
@@ -55,18 +71,21 @@ the arrangement of regular faces around a vertex.
 - **Reset view** restores the starting camera and zoom.
 - **Expand** enters fullscreen if supported by the browser.
 
-The animation starts on a dodecahedron and stops on the completed icosahedron. Reduced-motion preferences
-start the experience paused with auto-orbit disabled; playback remains available
-on request.
+The arrow beside the clock shows travel direction. The clock measures progress
+through one repeating round trip, starting from the center heading right.
+Reduced-motion preferences start at the center paused with auto-orbit disabled;
+playback remains available on request.
 
 ## Implementation
 
 `geometry.js` builds regular solids, matches vertices with minimum-cost
-assignment, samples reversible midpoint transitions, and computes convex polygonal hulls.
+assignment, samples reversible midpoint transitions, maps the centered timeline,
+reflects playback at its endpoints, and computes convex polygonal hulls.
 `animation.js` renders them with a
 perspective camera on a high-DPI 2D canvas and handles the timeline and controls.
 `styles.css` contains the responsive layout. Everything runs locally.
 
 Open `tests.html` in a browser to run the geometry regression checks, including
-both orders, midpoint and subsegment construction, merging, phase boundaries,
-regular final faces, and the absence of temporary wireframe diagonals.
+both orders and directions, midpoint and subsegment construction, merging,
+phase boundaries, centered positioning, repeated endpoint bounces, regular final
+faces, and the absence of temporary wireframe diagonals.
