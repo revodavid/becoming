@@ -3,6 +3,7 @@
 (() => {
   const G = window.Geometry;
   const timeline = G.makeTimeline();
+  const redirectDuration = 1.5;
   const $ = id => document.getElementById(id);
   const canvas = $("scene"), ctx = canvas.getContext("2d");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -11,7 +12,7 @@
     playing: !reducedMotion.matches, speed: 1, orbit: !reducedMotion.matches,
     yaw: -0.16, pitch: 0.12, zoom: 1, orbitAngle: 0, dragging: false,
     width: 0, height: 0, nodeIndex: -1, labelKey: "", lastFrame: null, topologyKey: "",
-    topology: null
+    topology: null, redirect: null
   };
   const colors = { green: [181, 229, 191], gold: [242, 199, 126] };
   const rgba = (rgb, alpha) => `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`;
@@ -62,12 +63,17 @@
   function seek(position) {
     const time = G.positionToTime(timeline, position);
     Object.assign(state, G.advanceLoop(timeline, { time, direction: state.direction }, 0));
+    state.redirect = null;
     state.topologyKey = "";
   }
 
   $("play").addEventListener("click", () => setPlaying(!state.playing));
   $("reverse").addEventListener("click", () => {
+    const before = sample();
     Object.assign(state, G.reverseLoop(timeline, state));
+    const after = G.sampleTimeline(timeline, state);
+    state.redirect = before.points.some((point, i) => before.visibility[i] > 0 && G.distance2(point, after.points[i]) > 1e-12)
+      ? { points: before.points, elapsed: 0 } : null;
     state.lastFrame = null;
     updateLabels(sample());
   });
@@ -166,7 +172,8 @@
   resize();
 
   function sample() {
-    return G.sampleTimeline(timeline, state);
+    const frame = G.sampleTimeline(timeline, state);
+    return state.redirect ? G.redirectFrame(frame, state.redirect.points, state.redirect.elapsed / redirectDuration) : frame;
   }
 
   function updateLabels(frame) {
@@ -188,14 +195,13 @@
     if (state.labelKey !== labelKey) {
       $("caption").textContent = frame.copy[0];
       $("caption-detail").textContent = frame.copy[1];
-      $("phase-label").textContent = phase === "moving" ? "Transforming" : phase === "merging" ? "Points meeting" : "A moment to admire";
+      $("phase-label").textContent = phase === "moving" ? "Transforming" : phase === "merging" ? "Vertices meeting" : shape.name;
       document.querySelector(".phase-indicator").classList.toggle("adding", ["adding", "highlighting", "merging"].includes(phase));
       $("shape-stats").setAttribute("aria-label", `${phase === "holding" ? "Shape" : "Destination"}: ${shape.vertices} vertices, ${shape.edges} edges, ${shape.faces} faces`);
       $("path-vertices").classList.toggle("active", chapter === "vertices");
       $("path-faces").classList.toggle("active", chapter === "faces");
       $("path-vertices").textContent = frame.paths.vertices.label.toUpperCase();
       $("path-faces").textContent = frame.paths.faces.label.toUpperCase();
-      $("order-note").textContent = frame.paths[chapter].label;
       $("travel-direction").textContent = state.direction > 0 ? "\u2192" : "\u2190";
       $("travel-direction").setAttribute("aria-label", state.direction > 0 ? "Moving right" : "Moving left");
       const reverseLabel = `Reverse direction to move ${state.direction > 0 ? "left" : "right"}`;
@@ -207,7 +213,7 @@
     state.labelKey = labelKey;
     if (phase === "adding" || phase === "highlighting") {
       const arrived = frame.focus.filter(value => value >= 0.5).length;
-      const label = `${phase === "adding" ? "New points" : "Vertices in focus"}: ${arrived} / ${frame.stage.seeds.length}`;
+      const label = `${phase === "adding" ? "New vertices" : "Vertices in focus"}: ${arrived} / ${frame.stage.seeds.length}`;
       if ($("phase-label").textContent !== label) $("phase-label").textContent = label;
     }
     $("seek").value = frame.position;
@@ -263,7 +269,7 @@
     if (phase === "adding" || phase === "highlighting") topology = stage.sourceTopology;
     else if (phase === "holding" || phase === "merging") topology = stage.topology;
     else {
-      const key = `${stage.index}:${Math.round(progress * 1200)}`;
+      const key = `${stage.index}:${frame.motion}:${Math.round(progress * 1200)}:${Math.round((frame.routeBlend || 0) * 1200)}`;
       if (key !== state.topologyKey) {
         state.topology = G.hull(points);
         state.topologyKey = key;
@@ -297,7 +303,7 @@
       ctx.stroke();
     }
 
-    if (phase === "adding" || phase === "merging") {
+    if (frame.phase === "adding" && frame.motion === "grow") {
       stage.seeds.forEach((seed, i) => {
         const id = stage.changedStart + i;
         const visible = frame.visibility[id];
@@ -346,7 +352,14 @@
     state.lastFrame = timestamp;
     if (!document.hidden) {
       if (state.playing && dt > 0) {
-        Object.assign(state, G.advanceLoop(timeline, state, dt * state.speed));
+        let remaining = dt * state.speed;
+        if (state.redirect) {
+          const used = Math.min(remaining, redirectDuration - state.redirect.elapsed);
+          state.redirect.elapsed += used;
+          remaining -= used;
+          if (state.redirect.elapsed >= redirectDuration) state.redirect = null;
+        }
+        if (remaining > 0) Object.assign(state, G.advanceLoop(timeline, state, remaining));
       }
       const frame = sample();
       if (state.orbit && state.playing && !state.dragging && frame.stage.fromDimension === 3 && frame.stage.dimension === 3) {

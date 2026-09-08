@@ -264,7 +264,7 @@ window.Geometry = (() => {
       } else {
         const match = alignedTarget(previous.target, expanded);
         // Reindex, but never move, incoming vertices so survivors occupy the
-        // first slots and midpoint vertices can retire in reverse birth order.
+        // first slots and additional vertices can retire in reverse birth order.
         const order = expanded.map((_, i) => match.order.indexOf(i));
         source = order.map(i => previous.target[i]);
         destination = order.map(i => match.points[i]);
@@ -293,20 +293,36 @@ window.Geometry = (() => {
       stage.duration = stage.add + stage.morph + stage.merge + stage.hold;
       stage.changedStart = Math.min(stage.vertices, stage.previousCount);
       stage.shapeCaptions = definitions.find(shape => shape.name === stage.name).captions;
+      const small = stage.direction === "grow" ? stage.source.slice(0, stage.changedStart) : stage.target;
+      const large = stage.direction === "grow" ? stage.target : stage.source;
+      stage.mergeTargets = stage.seeds.map((_, i) => {
+        const point = large[stage.changedStart + i];
+        let nearest = 0;
+        for (let j = 1; j < small.length; j++) {
+          if (distance2(point, small[j]) < distance2(point, small[nearest])) nearest = j;
+        }
+        return nearest;
+      });
       start += stage.duration;
     });
     return stages;
   }
 
-  function sampleStage(stage, local) {
+  function sampleStage(stage, local, motion = stage.direction) {
     const shrinking = stage.direction === "shrink";
     const movingEnd = stage.add + stage.morph;
     const phase = local < stage.add ? (shrinking ? "highlighting" : "adding")
       : local < movingEnd ? "moving"
         : local < movingEnd + stage.merge ? "merging" : "holding";
     const progress = stage.morph ? smooth((local - stage.add) / stage.morph) : 1;
-    const points = phase === "holding" ? stage.target
-      : stage.source.map((p, i) => lerp(p, stage.destination[i], progress));
+    const points = phase === "holding" ? stage.target : stage.source.map((p, i) => {
+      if (motion === "shrink" && i >= stage.changedStart) {
+        const receiver = stage.mergeTargets[i - stage.changedStart];
+        return shrinking ? lerp(p, stage.target[receiver], progress)
+          : lerp(stage.source[receiver], stage.destination[i], progress);
+      }
+      return lerp(p, stage.destination[i], progress);
+    });
     const arrivals = stage.seeds.map((_, i) => {
       const spread = Math.max(0, stage.add - 2.1);
       const at = stage.seeds.length <= 1 ? 0.4 : 0.4 + i * spread / (stage.seeds.length - 1);
@@ -393,15 +409,15 @@ window.Geometry = (() => {
   function sampleTimeline(timeline, playback) {
     const stage = timeline.stages.find(s => playback.time < s.start + s.duration)
       || timeline.stages[timeline.stages.length - 1];
-    const frame = sampleStage(stage, playback.time - stage.start);
+    const motion = playback.direction > 0 && stage.direction !== "still"
+      ? (stage.direction === "grow" ? "shrink" : "grow") : stage.direction;
+    const frame = sampleStage(stage, playback.time - stage.start, motion);
     const geometryPhase = frame.phase;
     let displayStage = stage, phase = geometryPhase;
-    let motion = stage.direction;
     let focus = frame.arrivals;
-    // The timeline runs opposite to the stored construction sequence. Reverse
-    // its geometry exactly, but describe the action the viewer is now seeing.
+    // Playback can follow either direction, but births always use midpoints
+    // and removals always converge on surviving vertices.
     if (playback.direction > 0 && stage.direction !== "still") {
-      motion = stage.direction === "grow" ? "shrink" : "grow";
       const holdTime = frame.local - stage.add - stage.morph - stage.merge;
       const reverseHighlight = geometryPhase === "holding" && stage.direction === "grow" && holdTime < 2.6;
       if (geometryPhase !== "holding" || reverseHighlight) {
@@ -448,8 +464,17 @@ window.Geometry = (() => {
     ];
     return { ...frame, geometryPhase, phase, displayStage, node, position, chapter, increasing, paths, motion, focus, copy };
   }
+
+  function redirectFrame(frame, source, progress) {
+    const routeBlend = smooth(progress);
+    return {
+      ...frame,
+      points: source.map((point, i) => lerp(point, frame.points[i], routeBlend)),
+      phase: "moving", geometryPhase: "moving", routeBlend
+    };
+  }
   return {
     add, sub, scale, dot, cross, length, normalize, lerp, distance2, smooth, rotate, hull,
-    makeStages, sampleStage, makeTimeline, positionToTime, timeToPosition, advanceLoop, reverseLoop, sampleTimeline
+    makeStages, sampleStage, makeTimeline, positionToTime, timeToPosition, advanceLoop, reverseLoop, sampleTimeline, redirectFrame
   };
 })();

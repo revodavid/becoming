@@ -66,7 +66,10 @@ try {
         small.push(seed.position);
       }
       const expanded = stage.direction === "shrink" ? stage.destination : stage.source;
-      assert(small.every((p, i) => near(p, expanded[i])), tag + " midpoint coordinates used by the morph");
+      assert(small.every((p, i) => near(p, expanded[i])), tag + " midpoint coordinates used by additions");
+      assert(stage.mergeTargets.length === stage.seeds.length, tag + " one receiver per removed vertex");
+      assert(stage.mergeTargets.every(i => Number.isInteger(i) && i >= 0 && i < stage.changedStart),
+        tag + " receivers are existing surviving vertices");
     }
 
     const allowedEdges = new Set([...stage.sourceTopology.edges, ...stage.topology.edges].map(([a, b]) => edgeKey(a, b)));
@@ -75,6 +78,10 @@ try {
       stage.add + stage.morph, stage.add + stage.morph + stage.merge * 0.5, stage.duration - 0.01];
     for (const t of times) {
       const frame = G.sampleStage(stage, t);
+      const growing = G.sampleStage(stage, t, "grow");
+      const originalGrowth = growing.phase === "holding" ? stage.target
+        : stage.source.map((p, i) => G.lerp(p, stage.destination[i], growing.progress));
+      equal(growing.points, originalGrowth, tag + " addition trajectories are unchanged");
       assert(frame.points.flat().every(Number.isFinite), tag + " finite positions");
       assert(frame.visibility.every(v => v >= 0 && v <= 1), tag + " valid visibility");
       assert(frame.emphasis.every(v => v >= 0 && v <= 1), tag + " valid highlights");
@@ -96,6 +103,8 @@ try {
       const settled = G.sampleStage(stage, stage.add + stage.morph + stage.merge - 1e-6);
       assert(settled.visibility.slice(stage.vertices).every(v => v < 1e-8), tag + " extras fade before removal");
       assert(stage.target.every((p, i) => near(p, settled.points[i])), tag + " survivors remain continuous");
+      stage.mergeTargets.forEach((receiver, i) => assert(near(settled.points[stage.changedStart + i], settled.points[receiver]),
+        tag + " removed points coincide with surviving vertices"));
     }
     messages.push("PASS: " + tag + " - geometry, midpoints, motion, edges and phase boundaries");
   }
@@ -168,9 +177,22 @@ try {
     assert(state.time >= timeline.minTime - 1e-9 && state.time <= timeline.maxTime + 1e-9, "Playback stays on the timeline");
     assert(frame.copy.length === 2 && frame.copy.every(text => typeof text === "string" && text.length), "Direction-aware learner captions");
     assert(frame.copy.every(text => !/first.*decreasing|now follow increasing face/i.test(text)), "No obsolete chapter narration");
-    const original = G.sampleStage(frame.stage, state.time - frame.stage.start);
-    assert(frame.points.every((p, i) => near(p, original.points[i])), "Reverse playback preserves exact geometry");
-    equal(frame.visibility, original.visibility, "Reverse playback preserves midpoint arrivals and removals");
+    const original = G.sampleStage(frame.stage, state.time - frame.stage.start, frame.motion);
+    assert(frame.points.every((p, i) => near(p, original.points[i])), "Playback uses the correct addition or removal route");
+    equal(frame.visibility, original.visibility, "Playback preserves arrival and removal timing");
+    if (frame.motion === "shrink") {
+      frame.stage.mergeTargets.forEach((receiver, i) => {
+        const id = frame.stage.changedStart + i;
+        if (id < frame.points.length && frame.visibility[id] < 1) {
+          assert(near(frame.points[id], frame.points[receiver]), "Removal fades only at an existing vertex, never at a midpoint");
+        }
+      });
+    }
+    if (frame.phase === "adding") {
+      frame.stage.seeds.forEach((seed, i) => {
+        assert(near(frame.points[frame.stage.changedStart + i], seed.position), "New vertices still appear at their edge midpoints");
+      });
+    }
     if (frame.phase === "holding") {
       assert(frame.points.length === frame.displayStage.vertices, "Reverse hold labels match the visible solid");
       if (visited[visited.length - 1] !== frame.node.index) visited.push(frame.node.index);
@@ -179,8 +201,33 @@ try {
     if (frame.phase === "merging") assert(frame.motion === "shrink", "Reverse merging has the correct legend");
   }
   equal(visited, [7,8,9,10,11,12,13,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0,1,2,3,4,5,6,7], "Complete continuous bounce itinerary");
+  for (const stage of stages.filter(s => s.direction !== "still")) {
+    const direction = stage.direction === "shrink" ? -1 : 1;
+    let startingDistances;
+    for (const progress of [0, 0.25, 0.5, 0.75, 1]) {
+      const local = stage.add + stage.morph * (stage.direction === "shrink" ? progress : 1 - progress);
+      const frame = G.sampleTimeline(timeline, { time: stage.start + local, direction });
+      const distances = stage.mergeTargets.map((receiver, i) => G.distance2(frame.points[stage.changedStart + i], frame.points[receiver]));
+      if (progress === 0) startingDistances = distances;
+      distances.forEach((distance, i) => {
+        const expectedDistance = startingDistances[i] * (1 - G.smooth(progress)) ** 2;
+        assert(Math.abs(distance - expectedDistance) < 1e-8, "Removed vertices converge continuously on their moving receivers");
+      });
+    }
+    const before = G.sampleTimeline(timeline, { time: stage.start + stage.add + stage.morph / 2, direction });
+    const after = G.sampleTimeline(timeline, { time: stage.start + stage.add + stage.morph / 2, direction: -direction });
+    const turnStart = G.redirectFrame(after, before.points, 0);
+    const turnEnd = G.redirectFrame(after, before.points, 1);
+    equal(turnStart.points, before.points, "Mid-transition reversal begins at the displayed positions");
+    assert(turnEnd.points.every((p, i) => near(p, after.points[i])), "Mid-transition reversal joins the new route");
+    equal(turnStart.visibility, before.visibility, "No vertex disappears during redirection");
+    for (const progress of [0.25, 0.5, 0.75]) {
+      assert(G.redirectFrame(after, before.points, progress).points.flat().every(Number.isFinite), "Finite smooth route redirection");
+    }
+  }
   messages.push("PASS: one centered row, both directions, reverse captions, exact bounces, 100 loops and the full itinerary");
   messages.push("PASS: both path headings follow direction; manual reversal preserves geometry and position, including at endpoints");
+  messages.push("PASS: removals meet surviving vertices before fading in both directions; midpoint additions are unchanged; mid-transition reversals redirect smoothly");
   document.getElementById("results").textContent = messages.join("\n");
   document.documentElement.dataset.result = "passed";
 } catch (error) {

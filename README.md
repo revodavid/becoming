@@ -48,19 +48,21 @@ exception, since there is not yet an edge. If more new points are needed than
 there are edges, previously bisected segments are bisected again. Each such point
 still begins halfway between two vertices already present.
 
-When losing vertices, the construction is reversed: highlighted vertices move
-onto edge midpoints, then fade into those edges in reverse birth order. Surviving
-vertices move smoothly too. The line's two endpoints finally coincide as a point.
+When losing vertices, highlighted vertices converge on existing surviving
+vertices, then disappear only after they coincide. Surviving vertices move
+smoothly too. Each removed vertex follows a nearby survivor, never an edge
+midpoint. The line's two endpoints finally coincide as a point.
 The face-count path includes merging as well as growth: more faces need not
 mean more vertices.
 
 Each transition has a point-introduction or highlighting pause, a slow morph,
 and a generous viewing pause. Merging has an additional settling interval at the
-midpoints. Intermediate surfaces are convex hulls of the moving vertices; they
+receiving vertices. The top-right status badge names the displayed shape during
+viewing pauses. Intermediate surfaces are convex hulls of the moving vertices; they
 are not themselves Platonic solids. The wireframe blends only the source and
 destination edges, never temporary hull triangulation diagonals. Final faces
 are actual polygons. Original edges fade early during growth, and late during
-merging so the reverse construction remains visible.
+merging so changes in connectivity remain readable.
 The statistics describe the destination shape during a transition.
 Captions and highlights follow the actual direction of travel, including when
 the geometry is played backward. They explore dimension, equal lengths, volume,
@@ -71,7 +73,10 @@ and the arrangement of regular faces around a vertex.
 - **Play / Pause**, or **Space** outside form controls.
 - **Reverse** to switch travel direction at the current position without changing
   whether playback is running or paused. Endpoint bounces still keep the loop
-  within the timeline.
+  within the timeline. Since additions and removals follow different paths,
+  reversing mid-transition smoothly redirects the visible vertices before the
+  timeline continues. A paused reversal waits for Play to do this; points do not
+  jump or disappear while being redirected.
 - **Restart** to return to the shared point, reset the loop clock, and play rightward.
 - Click any shape to jump to its viewing pause, preserving playback state and
   direction. At an endpoint, direction turns inward.
@@ -91,7 +96,7 @@ playback remains available on request.
 ## Implementation
 
 `geometry.js` builds regular solids, matches vertices with minimum-cost
-assignment, samples reversible midpoint transitions, maps the centered timeline,
+assignment, samples midpoint additions and vertex-to-vertex merges, maps the centered timeline,
 reflects playback at its endpoints, and computes convex polygonal hulls.
 `animation.js` renders them with a
 perspective camera on a high-DPI 2D canvas and handles the timeline and controls.
@@ -101,3 +106,10 @@ Open `tests.html` in a browser to run the geometry regression checks, including
 both orders and directions, midpoint and subsegment construction, merging,
 phase boundaries, centered positioning, repeated endpoint bounces, regular final
 faces, and the absence of temporary wireframe diagonals.
+
+## License
+
+Copyright (C) 2026 David Smith.
+
+Becoming is licensed under the GNU General Public License, version 2 only
+(`GPL-2.0-only`). See [LICENSE](LICENSE) for the complete terms.
