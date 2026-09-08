@@ -24,11 +24,38 @@
   let app;
   try {
     const bytes = Midi.decode(BecomingScore), score = Midi.parse(bytes), model = M.makeModel(timeline, score);
-    assert(score.format === 1 && score.tracks === 6 && score.ppq === 480, "Type 1, six tracks including flute, PPQ");
+    assert(score.format === 1 && score.tracks === 9 && score.ppq === 480, "Type 1, nine orchestral tracks, PPQ");
     assert(score.programs.some(p => p.channel === 3 && p.program === 73), "Dedicated MIDI flute instrument");
+    for (const [channel, program] of [[4, 42], [5, 40], [6, 47]]) {
+      assert(score.programs.some(p => p.channel === channel && p.program === program), "Dedicated cello, violin, and timpani programs");
+    }
     assert(score.markers.filter(m => m.name.startsWith("arrival:")).length === 28, "28 authored arrivals");
     assert(JSON.stringify(score.keys.map(k => [k.sharps, k.minor])) === "[[2,0],[-1,1],[1,0],[-2,1]]", "Four expected key signatures");
     assert(score.notes.every(n => n.endTick > n.tick && n.velocity > 0), "Paired positive notes");
+    const captionMarkers = score.markers.filter(m => m.name.startsWith("caption:"));
+    assert(captionMarkers.length === 32, "Every shape phrase and movement opening has caption-inspired rhythm");
+    for (const marker of captionMarkers) {
+      const [, leg, index, caption] = marker.name.split(":");
+      assert(caption === timeline.stages[Number(index)].shapeCaptions[0], "Rhythm refers to the displayed object's actual caption");
+      const scan = score.markers.find(m => m.tick === marker.tick && m.name.startsWith(`scansion:${leg}:${index}:`));
+      assert(scan && scan.name.split(":")[3].replaceAll("-", "").toLowerCase() === caption.toLowerCase(),
+        "Written stresses and syllables cover the whole caption, with punctuation breaths");
+      assert(model.notes.some(n => n.tick === marker.tick && ["piano", "flute"].includes(n.instrument)),
+        "Caption rhythm begins at its shape or movement cue");
+    }
+    const spokenMotifs = [5, 4, 2].map(index => {
+      const arrival = model.arrivals.find(a => a.name === `arrival:A-out:${index}`);
+      return score.notes.filter(n => n.channel === 0 && n.pitch >= 72 &&
+        n.tick >= arrival.tick && n.tick < arrival.tick + 4 * score.ppq)
+        .map(n => ({ pitch: n.pitch, start: n.tick - arrival.tick, length: n.endTick - n.tick }));
+    });
+    assert(spokenMotifs.every(notes => notes.map(n => n.pitch).join(",") === "74,78,81,78,76,74"),
+      "Triangle, tetrahedron, and cube keep the movement's recurring melodic identity");
+    assert(new Set(spokenMotifs.map(notes => JSON.stringify(notes.map(n => [n.start, n.length])))).size === 3,
+      "Different caption syllables actually reshape the same melody's MIDI rhythm");
+    const gap = notes => notes[1].start - notes[0].start - notes[0].length;
+    assert(gap(spokenMotifs[2]) > gap(spokenMotifs[1]) + score.ppq / 4,
+      "The full stop after Cube becomes a breath, unlike the continuing tetrahedron syllables");
     const firstNotes = model.notes.filter(n => n.tick === 0);
     assert(firstNotes.length > 0 && firstNotes.every(n => n.instrument === "flute"), "Sparse opening begins with flute alone");
     const sectionMarkers = score.markers.filter(m => m.name.startsWith("section:"));
@@ -52,12 +79,16 @@
     for (const [letter, sectionName, dominant] of [["A", "A-return", [9, 1, 7]], ["B", "B-return", [2, 6, 0]]]) {
       const turn = name => score.markers.find(m => m.name === `turn:${letter}:${name}`);
       const start = turn("start"), pivot = turn("dominant"), resolve = turn("resolve");
+      const breath = turn("caesura");
       const boundary = sectionMarkers.find(m => m.name === `section:${sectionName}`);
       assert(start && pivot && resolve && start.tick < pivot.tick && pivot.tick < resolve.tick &&
         resolve.tick === boundary.tick, "Endpoint has a prepared modulation, dominant, and minor resolution");
       const harmony = score.notes.filter(n => n.channel !== 9 && n.tick <= pivot.tick + score.ppq / 8 &&
         n.endTick > pivot.tick + score.ppq / 8).map(n => n.pitch % 12);
       assert(dominant.every(pitch => harmony.includes(pitch)), "Cadential dominant prepares the new minor tonic");
+      assert(breath && breath.tick < resolve.tick && score.notes
+        .filter(n => n.tick >= start.tick && n.tick < resolve.tick).every(n => n.endTick <= breath.tick),
+      "Caption-shaped cadence preserves its written breath before the minor resolution");
     }
     for (let i = 1; i < model.anchors.length; i++) {
       const a = model.anchors[i - 1], b = model.anchors[i];
@@ -108,7 +139,10 @@
       const count = stage[path];
       assert(notes.some(n => n.instrument === "strings") === (count >= 6), arrival.name + " destination strings");
       assert(notes.some(n => n.instrument === "bass") === (count >= 4), arrival.name + " destination bass");
-      assert(notes.some(n => n.instrument === "percussion") === (count >= 12), arrival.name + " destination percussion");
+      assert(notes.some(n => n.instrument === "cello") === (count >= 4), arrival.name + " destination cello");
+      assert(notes.some(n => n.instrument === "violin") === (count >= 8), arrival.name + " destination violin");
+      assert(notes.some(n => n.instrument === "timpani") === (count >= 12), arrival.name + " destination timpani");
+      assert(notes.some(n => n.instrument === "percussion") === (count >= 8), arrival.name + " destination percussion");
       if (count >= 6) {
         assert(new Set(notes.filter(n => n.instrument !== "percussion").map(n => n.pitch % 12)).size >= 3,
           arrival.name + " fuller chordal arrival");
@@ -146,7 +180,7 @@
     fails(() => M.makeModel(timeline, badMarkers), "Reject absent arrival marker");
     const missingOpening = { ...score, notes: score.notes.filter(n => n.tick !== 0) };
     fails(() => M.makeModel(timeline, missingOpening), "Reject missing section melody before a reverse bridge can use it");
-    messages.push("PASS: four distinct movements, flute opening, expressive rhythms/rests, prepared endpoint modulations, and 28 chordal completion cues");
+    messages.push("PASS: caption scansion, four melodic movements, flute opening, prepared modulations, and 28 progressively orchestrated completion cues");
 
     // A deterministic audio-clock double exercises the actual scheduler without
     // allocating an entire multi-minute audio rendering for every pace.
@@ -250,6 +284,17 @@
     assert(fluteSamples.every(Number.isFinite) && fluteSamples.some(n => Math.abs(n) > 0.0001), "Flute synthesis produces finite audible samples");
     assert(fluteSamples.slice(36000).every(n => n === 0) && fluteSynth.voices.size === 0, "Flute vibrato and breath sources fully release");
     fluteSynth.dispose();
+    for (const [instrument, pitch] of [["strings", 62], ["cello", 50], ["violin", 81],
+      ["timpani", 38], ["percussion", 36], ["percussion", 38], ["percussion", 49], ["percussion", 81]]) {
+      const context = new Offline(1, 2 * 24000, 24000), synth = M.createSynth(context);
+      synth.voice({ instrument, pitch, velocity: 50 }, 0, 0.75);
+      const samples = (await context.startRendering()).getChannelData(0);
+      assert(samples.every(Number.isFinite) && samples.some(n => Math.abs(n) > 0.0001),
+        instrument + " has an audible synthesized voice");
+      assert(samples.slice(36000).every(n => n === 0) && synth.voices.size === 0,
+        instrument + " oscillators, vibrato, and noise release completely");
+      synth.dispose();
+    }
 
     const originalAudio = window.AudioContext, originalWebkit = window.webkitAudioContext;
     const originalScore = window.BecomingScore;

@@ -110,8 +110,8 @@ playback remains available on request.
 
 ## Original soundtrack
 
-Piano and flute lead four original classical movements, supported by strings,
-bass, and light percussion. Each has its own rhythmic and melodic character,
+Piano and flute lead four original classical movements, supported by orchestral
+strings, cello, violin, bass, timpani, and percussion. Each has its own rhythmic and melodic character,
 with shape-completion cadences linking the music to the geometry.
 
 | Journey | Theme and key | Arrangement |
@@ -137,6 +137,18 @@ Long notes, dotted rhythms, short runs, and breathing rests replace a uniform
 stream of equal-length notes. Larger shapes receive fuller piano and string
 chords rather than only faster single notes.
 
+The object captions now provide rhythmic inspiration. Written syllables and
+stresses, such as **tet-ra-HE-dron. FOUR FA-ces in PER-fect BAL-ance.**, shape
+note lengths and accents; punctuation introduces breathing rests. The original
+pitch sequences and harmonies remain the melodic thread of each movement.
+This is instrumental phrasing, not speech synthesis or a sung transcription.
+
+Orchestration expands with the active path's count: cello and bass at four,
+the fuller string ensemble at six, violin and triangle at eight, then timpani,
+bass drum, and snare at twelve. Cymbals mark the largest arrivals. The layers
+withdraw at the corresponding counts on the return journey. Bowed voices swell
+gently and are more prominent in the mix without replacing the main melody.
+
 Each outer endpoint has its own composed modulation. Borrowed minor harmony,
 suspensions, and a dominant chord prepare the return's minor tonic, rather than
 switching scales abruptly at the bounce. The vertex and face endpoints use
@@ -157,8 +169,8 @@ Sound requires Web Audio and an explicit Music-button gesture. If the browser
 blocks or suspends audio, a status message explains the problem; toggle Music to
 retry. Geometry remains usable without audio. No microphone, MIDI-device
 permission, internet connection, samples, soundfonts, or audio downloads are
-needed. The decaying-partial piano, oscillator strings, and flute with soft
-breath and delayed vibrato are intentionally small synthesized instruments,
+needed. The decaying-partial piano, layered bowed voices, tuned timpani,
+orchestral percussion, and flute with soft breath and delayed vibrato are small synthesized instruments,
 **not realistic sampled acoustic instruments**.
 
 ## Implementation
@@ -181,21 +193,25 @@ and node cleanup. A render stall does not let audio advance indefinitely.
 
 ### Score source and regeneration
 
-- `music/becoming.mid` is the canonical six-track, type-1 MIDI score, with
+- `music/becoming.mid` is the canonical nine-track, type-1 MIDI score, with
   section/phrase/arrival markers, key/time signatures, tempo, programs, and
   explicit releases. It can also be opened independently in a MIDI editor.
 - `music/score-data.js` embeds **exactly the same MIDI bytes** as base64. Classic
   script loading avoids `file:` fetch restrictions; the browser parses this MIDI,
   rather than playing a separately maintained JavaScript note list.
-- `music/compose.py` defines the original themes and deterministic arrangement.
+- `music/compose.py` defines the original themes, caption scansion, and
+  deterministic arrangement. It checks its written syllables against the
+  actual object captions in `geometry.js`; if a caption changes, update its
+  scansion before regenerating. Caption and scansion MIDI markers make this
+  association inspectable without maintaining a second runtime note list.
   To regenerate both artifacts with Python 3.10+ (standard library only), run
   `python music\compose.py` from the project directory. Repeated runs produce
   byte-identical files. Python is an optional authoring tool, not a playback or
   deployment requirement.
 
-The canonical MIDI, deliberate base64 duplication, decoder, and player total
-approximately **97 KiB uncompressed**, below the 200 KiB music-asset budget.
-The MIDI contains 2,536 notes. No mandatory build step or Pages
+The canonical MIDI, deliberate base64 duplication, decoder, and player remain
+below the 200 KiB music-asset budget; the composer reports and enforces their
+combined size. No mandatory build step or Pages
 configuration change is needed; the new files publish with the other static files.
 
 ### Regression checks
@@ -206,8 +222,9 @@ phase boundaries, centered positioning, repeated endpoint bounces, regular final
 faces, and the absence of temporary wireframe diagonals.
 
 Open `music-tests.html` for parser rejection cases, all 28 completion/caption
-arrivals and their instrument layers, expressive note/rest lengths, distinct
-movement contours, prepared endpoint modulations, flute synthesis, changed
+arrivals and their instrument layers, caption/scansion correspondence, expressive
+note/rest lengths, distinct movement contours, prepared endpoint modulations,
+flute/string/percussion synthesis and cleanup, changed
 timeline durations, count-based intensity, every pace, repeated complete loops, capped-clock stalls, transport
 cancellation, and OfflineAudioContext sample/voice-cleanup checks. It also tests
 audio failure messages and desktop/narrow playback controls. HTTP hosting allows

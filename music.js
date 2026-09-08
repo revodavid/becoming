@@ -99,7 +99,9 @@ window.Music = (() => {
       const start = positionAtTick(note.tick), end = positionAtTick(note.endTick);
       return { ...note, id, start, duration: end - start,
         instrument: note.channel === 9 ? "percussion" : note.channel === 1 ? "strings"
-          : note.channel === 2 ? "bass" : note.channel === 3 ? "flute" : "piano" };
+          : note.channel === 2 ? "bass" : note.channel === 3 ? "flute"
+            : note.channel === 4 ? "cello" : note.channel === 5 ? "violin"
+              : note.channel === 6 ? "timpani" : "piano" };
     });
     for (const leg of legs) {
       const anchor = anchors.find(a => a.name === `section:${leg}`);
@@ -145,12 +147,15 @@ window.Music = (() => {
         oldest.dispose();
       }
       const start = Math.max(context.currentTime, when);
-      const release = note.instrument === "flute" ? 0.22 : note.instrument === "strings" ? 0.18 : 0.10;
+      const bowed = ["strings", "cello", "violin"].includes(note.instrument);
+      const percussive = ["percussion", "timpani"].includes(note.instrument);
+      const release = note.instrument === "flute" ? 0.22 : bowed ? 0.24 : 0.10;
       const length = clamp(duration, 0.025, 12), end = start + length + release;
       const gain = context.createGain(), sources = [], nodes = [gain];
       gain.connect(master);
       const frequency = 440 * 2 ** ((note.pitch - 69) / 12);
-      const level = note.velocity / 127 * (0.028 + 0.024 * clamp(strength));
+      const balance = note.instrument === "violin" ? 0.8 : note.instrument === "strings" ? 1.1 : 1;
+      const level = note.velocity / 127 * (0.028 + 0.024 * clamp(strength)) * balance;
       let disposed = false, stopped = false;
       function dispose() {
         if (disposed) return;
@@ -180,6 +185,15 @@ window.Music = (() => {
         osc.connect(partial); partial.connect(gain);
         nodes.push(partial); sources.push(osc);
       }
+      function vibrato(rate, cents) {
+        const lfo = context.createOscillator(), depth = context.createGain();
+        lfo.frequency.value = rate;
+        depth.gain.setValueAtTime(0, start);
+        depth.gain.linearRampToValueAtTime(cents, start + Math.min(0.8, length * 0.65));
+        lfo.connect(depth);
+        for (const source of sources) depth.connect(source.detune);
+        nodes.push(depth); sources.push(lfo);
+      }
       if (note.instrument === "piano") {
         oscillator("sine", frequency, 1, Math.min(3.8, length + 0.1));
         oscillator("sine", frequency * 2.002, 0.36, Math.min(1.1, length));
@@ -188,13 +202,7 @@ window.Music = (() => {
         oscillator("sine", frequency, 0.85);
         oscillator("sine", frequency * 2, 0.16);
         oscillator("sine", frequency * 3, 0.035);
-        const vibrato = context.createOscillator(), depth = context.createGain();
-        vibrato.frequency.value = 4.8;
-        depth.gain.setValueAtTime(0, start);
-        depth.gain.linearRampToValueAtTime(6, start + Math.min(0.8, length * 0.65));
-        vibrato.connect(depth);
-        for (const source of sources) depth.connect(source.detune);
-        nodes.push(depth); sources.push(vibrato);
+        vibrato(4.8, 6);
         const breath = context.createBufferSource(), filter = context.createBiquadFilter();
         const breathGain = context.createGain();
         breath.buffer = noise; breath.loop = true;
@@ -202,32 +210,53 @@ window.Music = (() => {
         breathGain.gain.value = 0.022;
         breath.connect(filter); filter.connect(breathGain); breathGain.connect(gain);
         sources.push(breath); nodes.push(filter, breathGain);
-      } else if (note.instrument === "strings") {
+      } else if (bowed) {
         const filter = context.createBiquadFilter();
-        filter.type = "lowpass"; filter.frequency.value = 1600; filter.Q.value = 0.5;
+        filter.type = "lowpass";
+        filter.frequency.value = note.instrument === "cello" ? 1400 : note.instrument === "violin" ? 3000 : 2300;
+        filter.Q.value = 0.5;
         gain.disconnect(); gain.connect(filter); filter.connect(master); nodes.push(filter);
-        oscillator("sawtooth", frequency * 0.998, 0.20);
-        oscillator("triangle", frequency * 1.002, 0.28);
+        oscillator("sawtooth", frequency * 0.997, 0.24);
+        oscillator("sawtooth", frequency * 1.003, 0.24);
+        oscillator("triangle", frequency, note.instrument === "cello" ? 0.30 : 0.18);
+        vibrato(note.instrument === "cello" ? 4.5 : 5.3, note.instrument === "strings" ? 4 : 7);
       } else if (note.instrument === "bass") {
         oscillator("triangle", frequency, 0.8);
         oscillator("sine", frequency * 2, 0.12);
+      } else if (note.instrument === "timpani") {
+        oscillator("sine", frequency, 0.85, Math.min(1.2, length));
+        oscillator("sine", frequency * 1.505, 0.22, Math.min(0.65, length));
+        oscillator("sine", frequency * 2.01, 0.10, Math.min(0.4, length));
+        sources[0].frequency.setValueAtTime(frequency * 1.035, start);
+        sources[0].frequency.exponentialRampToValueAtTime(frequency, start + Math.min(0.08, length));
       } else {
         if (note.pitch === 36) {
           oscillator("sine", 90, 0.7);
           sources[0].frequency.exponentialRampToValueAtTime(38, start + 0.1);
+        } else if (note.pitch === 81) {
+          for (const [hz, amount] of [[5200, 0.35], [7020, 0.22], [9790, 0.12]]) {
+            oscillator("sine", hz, amount, Math.min(0.7, length));
+          }
         } else {
           const source = context.createBufferSource(), filter = context.createBiquadFilter();
-          source.buffer = noise; filter.type = "highpass"; filter.frequency.value = 6500;
+          source.buffer = noise; source.loop = length > 0.25;
+          filter.type = note.pitch === 38 ? "bandpass" : "highpass";
+          filter.frequency.value = note.pitch === 38 ? 2200 : note.pitch === 49 ? 4500 : 6500;
+          filter.Q.value = 0.7;
           source.connect(filter); filter.connect(gain); sources.push(source); nodes.push(filter);
+          if (note.pitch === 38) oscillator("triangle", 190, 0.18, Math.min(0.1, length));
         }
       }
-      const attack = Math.min(note.instrument === "flute" ? 0.12 : note.instrument === "strings" ? 0.09 : 0.008, length / 3);
+      const attack = Math.min(note.instrument === "flute" ? 0.12 : bowed ? 0.13 : 0.008, length / 3);
       gain.gain.setValueAtTime(0, start);
       gain.gain.linearRampToValueAtTime(level, start + attack);
       if (note.instrument === "flute" && length > 0.4) {
         gain.gain.linearRampToValueAtTime(level * 0.82, start + length * 0.75);
+      } else if (bowed && length > 0.6) {
+        gain.gain.linearRampToValueAtTime(level * 1.12, start + length * 0.55);
       }
-      gain.gain.linearRampToValueAtTime(note.instrument === "flute" ? level * 0.72 : level, start + length);
+      const sustain = percussive ? 0.03 : note.instrument === "flute" ? 0.72 : bowed ? 0.9 : 1;
+      gain.gain.linearRampToValueAtTime(level * sustain, start + length);
       gain.gain.linearRampToValueAtTime(0, end);
       let ended = 0;
       for (const source of sources) {

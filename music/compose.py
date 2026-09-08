@@ -7,6 +7,8 @@ contract; triplets, rubato-like rests and cadences live INSIDE those allocations
 """
 import base64
 import hashlib
+import json
+import re
 import struct
 from fractions import Fraction
 from pathlib import Path
@@ -178,6 +180,75 @@ PHRASES = {
     "B-return": [24, 56, 28, 40, 28, 28, 28, 12],
 }
 
+# Capitals mark spoken stresses; hyphens divide syllables, punctuation gives breath.
+# Wording is checked against the actual object captions before MIDI is generated.
+SCANS = {
+    "Point": "POINT. po-SI-tion with-OUT SIZE.",
+    "Line": "LINE. the FIRST di-MEN-sion.",
+    "Triangle": "TRI-an-gle. BAL-ance in TWO di-MEN-sions.",
+    "Tetrahedron": "tet-ra-HE-dron. FOUR FA-ces in PER-fect BAL-ance.",
+    "Octahedron": "oc-ta-HE-dron. EIGHT FA-cets, ONE RHY-thm.",
+    "Cube": "CUBE. SIX FA-ces, BEAU-ti-ful-ly fa-MIL-iar.",
+    "Icosahedron": "i-co-sa-HE-dron. TWEN-ty WIN-dows on SYM-me-try.",
+    "Dodecahedron": "do-de-ca-HE-dron. TWELVE pen-TAG-o-nal FA-ces.",
+}
+STAGE_NAMES = [
+    "Dodecahedron", "Icosahedron", "Cube", "Octahedron", "Tetrahedron",
+    "Triangle", "Line", "Point", "Line", "Triangle", "Tetrahedron", "Cube",
+    "Octahedron", "Dodecahedron", "Icosahedron",
+]
+
+
+def object_captions():
+    source = (ROOT.parent / "geometry.js").read_text(encoding="utf-8")
+    matches = re.findall(r'\{ name: "([^"]+)"[^\n]*\n\s*captions: \[("(?:[^"\\]|\\.)*")', source)
+    captions = {name: json.loads(text) for name, text in matches}
+    if captions.keys() != SCANS.keys():
+        raise ValueError("Object captions changed; update the written musical scansion")
+    for name, scan in SCANS.items():
+        if scan.replace("-", "").lower() != captions[name].lower():
+            raise ValueError(f"Scansion no longer matches the {name} caption")
+    return captions
+
+
+def spoken_events(text, speech, expected):
+    """Retime the written tune, retaining every pitch and its original order."""
+    events = []
+    stress_weight, breath_weight = {
+        "A-out": (1.55, 0.65), "A-return": (1.8, 1.0),
+        "B-out": (1.4, 0.8), "B-return": (1.65, 1.1),
+    }[speech["leg"]]
+    for token in text.split():
+        name, span = token.split(":")
+        written = float(Fraction(span))
+        if name == "r":
+            events.append((name, written, 0))
+            continue
+        syllable = speech["symbols"][speech["cursor"]]
+        stressed = syllable.isupper()
+        weight = 0.6 * written + 0.4 * (stress_weight if stressed else 0.55)
+        events.append((name, weight, 5 if stressed else -3))
+        speech["cursor"] = (speech["cursor"] + 1) % len(speech["symbols"])
+        while speech["symbols"][speech["cursor"]] in (".", ","):
+            punctuation = speech["symbols"][speech["cursor"]]
+            events.append(("r", breath_weight * (1 if punctuation == "." else 0.5), 0))
+            speech["cursor"] = (speech["cursor"] + 1) % len(speech["symbols"])
+    total = sum(weight for _, weight, _ in events)
+    # Quantize cumulative boundaries, so the spoken phrase never shifts a shape cue.
+    cursor = 0
+    cumulative = 0
+    result = []
+    grid = 40 if speech["leg"] == "B-out" else 60
+    for name, weight, accent in events:
+        cumulative += weight
+        end = round(expected * PPQ * cumulative / total / grid) * grid
+        if end <= cursor:
+            raise ValueError("Caption rhythm produced a nonpositive duration")
+        if name != "r":
+            result.append((cursor / PPQ, (end - cursor) / PPQ, midi_pitch(name), accent))
+        cursor = end
+    return result
+
 
 def midi_pitch(name):
     semitone = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}[name[0]]
@@ -217,7 +288,8 @@ def chunk(name, data):
 
 
 def compose():
-    tracks = [[] for _ in range(6)]
+    captions = object_captions()
+    tracks = [[] for _ in range(9)]
     performed = []
     serial = 0
 
@@ -234,25 +306,30 @@ def compose():
             raise ValueError("Invalid performed note")
         performed.append((track, round(beat * PPQ), round((beat + duration) * PPQ), pitch, velocity))
 
-    def line(track, beat, text, velocity, expected=4, detached=False):
+    def line(track, beat, text, velocity, expected=4, detached=False, speech=None):
         notes, length = read_line(text)
         if length != expected:
             raise ValueError(f"Written line is {length}, expected {expected}: {text}")
-        for onset, span, pitch in notes:
+        performed_line = spoken_events(text, speech, expected) if speech else [
+            (onset, span, pitch, 3 if onset == 0 else -3 if span < 0.5 else 0)
+            for onset, span, pitch in notes
+        ]
+        for onset, span, pitch, accent in performed_line:
             breath = min(span * (0.16 if detached else 0.045), 0.11 if detached else 0.065)
-            accent = 3 if onset == 0 else -3 if span < 0.5 else 0
             note(track, beat + onset, span - breath, pitch, max(18, velocity + accent))
 
     def chord(track, beat, duration, pitches, velocity):
         for voice, pitch in enumerate(pitches):
             note(track, beat, duration, pitch, max(18, velocity - (2 if voice < len(pitches) - 1 else 0)))
 
-    for i, name in enumerate(["Becoming - original score", "Piano", "Strings", "Bass", "Light percussion", "Flute"]):
+    for i, name in enumerate(["Becoming - original score", "Piano", "Orchestral strings", "Bass",
+                             "Orchestral percussion", "Flute", "Cello", "Violin", "Timpani"]):
         event(i, 0, meta(3, name), 0)
     event(0, 0, meta(1, "Copyright 2026 David Smith; original composition; GPL-2.0-only"), 0)
     event(0, 0, meta(0x51, (625000).to_bytes(3, "big")), 0)  # 96 quarter notes/minute
     event(0, 0, meta(0x58, bytes([4, 2, 24, 8])), 0)
-    for track, channel, program in [(1, 0, 0), (2, 1, 48), (3, 2, 32), (5, 3, 73)]:
+    for track, channel, program in [(1, 0, 0), (2, 1, 48), (3, 2, 32), (5, 3, 73),
+                                    (6, 4, 42), (7, 5, 40), (8, 6, 47)]:
         event(track, 0, bytes([0xC0 | channel, program]), 0)
 
     # Counts follow the active path, not vertex counts on the face path.
@@ -302,25 +379,37 @@ def compose():
             chord(1, at, 1.3, (bass + 12, upper), velocity - 15)
         if count >= 4:
             note(3, at, 1.75 if cadence else 2.7 if leg != "A-out" else 1.4, bass, velocity - 11)
+            note(6, at, 1.65 if cadence else 2.8, bass + 12, velocity - 12)
+            if count >= 6 and not cadence:
+                note(6, at + 3, 0.65, voices[1], velocity - 18)
             if count >= 8 and style in ("spring", "dance"):
                 answer = next(pitch - 12 for pitch in voices if pitch % 12 != bass % 12)
                 note(3, at + (2.5 if leg == "A-out" else 3), 0.55, answer, velocity - 18)
         if count >= 6:
             # Three/four simultaneous bowed voices establish harmony at arrival.
             string_voices = voices if count >= 12 else voices[1:]
-            chord(2, at, hold, string_voices, velocity - 23)
+            chord(2, at, hold, string_voices, velocity - 10)
             if count >= 12 and style == "spring":
-                chord(2, at + 3.25, 0.45, voices[1:], velocity - 27)
+                chord(2, at + 3.25, 0.45, voices[1:], velocity - 16)
+        if count >= 8:
+            note(7, at, 1.5 if cadence else 2.4, voices[-1] + 12, velocity - 18)
+            if not cadence:
+                note(7, at + (8 / 3 if leg == "B-out" else 2.75), 0.7, voices[-2] + 12, velocity - 23)
+            if first or bar % 2 == 0:
+                note(4, at, 0.55, 81, 27 if not leg.endswith("return") else 22)
         if count >= 12:
+            note(8, at, 1.1 if cadence else 1.5, bass, velocity - 17)
             if first or (leg == "A-out" and style == "spring"):
-                note(4, at, 0.12, 36 if leg[0] == "A" else 42, 30 if not leg.endswith("return") else 22)
-            if leg == "A-out" and style == "spring" and bar % 2 == 0:
-                note(4, at + 2.75, 0.08, 42, 23)
-            elif leg == "B-out" and style == "dance":
-                for offset in (2 / 3, 8 / 3):
-                    note(4, at + offset, 0.07, 42, 22)
+                note(4, at, 0.35, 36, 39 if not leg.endswith("return") else 29)
+            if not cadence and bar % 2 == 0:
+                pickup = 8 / 3 if leg == "B-out" else 2.75
+                note(8, at + pickup, 0.5, bass + 7, velocity - 26)
+                for offset, accent in [(pickup, 24), (pickup + 0.25, 29)]:
+                    note(4, at + offset, 0.14, 38, accent)
+        if count >= 20 and first:
+            note(4, at, 1.0, 49, 34)
 
-    def bridge(leg, at):
+    def bridge(leg, at, speech):
         # Both largest-shape arrivals remain major, then the third is removed.
         # Nothing from these scored gestures is allowed through the caesura.
         def tutti(offset, harmony, length, velocity, percussion=False):
@@ -329,35 +418,40 @@ def compose():
             chord(1, at + offset, length, voices, velocity)
             chord(2, at + offset, length, voices, velocity - 13)
             note(3, at + offset, length, bass, velocity - 5)
+            note(6, at + offset, length, bass + 12, velocity - 10)
+            note(7, at + offset, length, voices[-1] + 12, velocity - 15)
             if percussion:
-                note(4, at + offset, 0.16, 36, 34)
+                note(8, at + offset, 1.1, bass, 51)
+                note(4, at + offset, 0.35, 36, 42)
+                note(4, at + offset, 0.8, 49, 32)
 
         if leg == "A-out":
             tutti(0, "D", 2.9, 67, True)
-            line(1, at, "D6:1.5 F#5:.5 A5:.75 r:1.25", 76, detached=True)
+            line(1, at, "D6:1.5 F#5:.5 A5:.75 r:1.25", 76, detached=True, speech=speech)
             marker(at + 4, "turn:A:start")
             tutti(4, "Gm", 3.1, 51)
-            line(5, at + 4, "Bb5:1.5 A5:.5 G5:.75 r:1.25", 51)
+            line(5, at + 4, "Bb5:1.5 A5:.5 G5:.75 r:1.25", 51, speech=speech)
             tutti(8, "A7sus", 1.8, 48)
-            line(5, at + 8, "D6:1.5 r:.5", 48, expected=2)
+            line(5, at + 8, "D6:1.5 r:.5", 48, expected=2, speech=speech)
             marker(at + 10, "turn:A:dominant")
             tutti(10, "A7", 1.65, 60)
-            line(1, at + 10, "C#5:1.25 E5:.5 r:.25", 61, expected=2)
+            line(1, at + 10, "C#5:1.25 E5:.5 r:.25", 61, expected=2, speech=speech)
             tutti(12, "A7", 1.7, 45)
-            line(1, at + 12, "A4:.75 C#5:.5 E5:.5 r:2.25", 46)
+            line(1, at + 12, "A4:.75 C#5:.5 E5:.5 r:2.25", 46, speech=speech)
             marker(at + 13.75, "turn:A:caesura")
         else:
             tutti(0, "G", 1.2, 67, True)
-            line(5, at, "G6:.75 D6:.25 r:.5", 73, expected=1.5)
+            line(5, at, "G6:.75 D6:.25 r:.5", 73, expected=1.5, speech=speech)
             marker(at + 1.5, "turn:B:start")
             tutti(1.5, "Eb", 1.1, 58)
-            line(5, at + 1.5, "Eb6:.5 Bb5:.5 r:.5", 62, expected=1.5)
+            line(5, at + 1.5, "Eb6:.5 Bb5:.5 r:.5", 62, expected=1.5, speech=speech)
             tutti(3, "Cm", 1.25, 51)
-            line(5, at + 3, "G5:.5 Eb5:.75 r:.25", 53, expected=1.5)
+            line(5, at + 3, "G5:.5 Eb5:.75 r:.25", 53, expected=1.5, speech=speech)
             tutti(4.5, "D7sus", 0.43, 47)
             marker(at + 5, "turn:B:dominant")
             tutti(5, "D7", 1.45, 57)
-            line(5, at + 5, "F#5:.5 A5:.5 D5:.5 r:1.5", 53, expected=3)
+            line(5, at + 5, "F#5:.25 F#5:.25 A5:.25 A5:.25 D5:.25 D5:.125 D5:.125",
+                 53, expected=1.5, speech=speech)
             marker(at + 6.5, "turn:B:caesura")
 
     beat = 0
@@ -374,23 +468,30 @@ def compose():
                            if minor else bytes([2 if leg[0] == "A" else 1, 0])))
         levels = [initial] + counts
         for phrase, (length, count) in enumerate(zip(PHRASES[leg], levels)):
+            shape_index = stages[phrase - 1] if phrase else (7 if not minor else 0 if leg[0] == "A" else 14)
+            shape = STAGE_NAMES[shape_index]
+            speech = {"leg": leg, "symbols": re.findall(r"[A-Za-z]+|[.,]", SCANS[shape]), "cursor": 0}
             marker(beat, f"phrase:{leg}:{phrase}")
+            marker(beat, f"caption:{leg}:{shape_index}:{captions[shape]}")
+            marker(beat, f"scansion:{leg}:{shape_index}:{SCANS[shape]}")
             if phrase:
                 marker(beat, f"arrival:{leg}:{stages[phrase - 1]}")
             if phrase == 0 and leg == "A-out":
                 marker(beat, "gesture:Point - distant unaccompanied breath")
-                line(5, beat, "D5:3.5 r:2.5 A5:4 r:1.5 E5:2.5 r:1 D6:2.25 r:2.75", 29, expected=20)
+                line(5, beat, "D5:3 r:2 A5:.75 A5:2 A5:.75 r:1 E5:.75 E5:2.25 D6:3 r:4.5",
+                     29, expected=20, speech=speech)
             elif phrase == 0 and leg == "B-out":
-                line(5, beat, "G5:2.5 r:.5 B5:1 r:2 D6:2 r:1 A5:1 r:1 G5:2.5 r:.5 D5:3 r:1 E5:1.5 r:.5 D5:1.25 r:2.75", 33, expected=24)
+                line(5, beat, "G5:2.5 r:.5 B5:1 r:2 D6:2 r:1 A5:1 r:1 G5:2.5 r:.5 D5:3 r:1 E5:1.5 r:.5 D5:1.25 r:2.75",
+                     33, expected=24, speech=speech)
             elif phrase == 7 and not minor:
-                bridge(leg, beat)
+                bridge(leg, beat, speech)
             elif phrase == 7 and leg == "A-return":
                 marker(beat, "cadence:shared D-A opens toward G")
-                line(1, beat, "D5:2.25 r:1.75 A4:1.5 r:.5 D5:1 r:5", 29, expected=12)
+                line(1, beat, "D5:2.25 r:1.75 A4:1.5 r:.5 D5:1 r:5", 29, expected=12, speech=speech)
                 line(5, beat, "r:8 G5:2.5 r:1.5", 25, expected=12)
             elif phrase == 7 and leg == "B-return":
                 marker(beat, "cadence:G minor dissolves to open D-A")
-                line(5, beat, "D5:2 r:1 A4:1.5 r:1.5 D5:2.75 r:3.25", 26, expected=12)
+                line(5, beat, "D5:2 r:1 A4:1.5 r:1.5 D5:2.75 r:3.25", 26, expected=12, speech=speech)
                 chord(1, beat + 6, 2.0, (50, 57), 20)
             else:
                 period = PERIODS[leg][phrase].split()
@@ -404,7 +505,7 @@ def compose():
                     velocity = round(base + count * growth + expression)
                     marker(at, "harmony:" + leg + ":" + harmony)
                     lead_track = 1 if leg[0] == "A" else 5
-                    line(lead_track, at, tune, velocity, detached=(leg == "A-out" and style == "spring"))
+                    line(lead_track, at, tune, velocity, detached=(leg == "A-out" and style == "spring"), speech=speech)
                     accompany(leg, at, harmony, count, velocity, style, bar == 0, bar)
                     counter = COUNTER.get(leg, {}).get(cell_name)
                     if count >= 8 and counter:
@@ -420,7 +521,7 @@ def compose():
         hits[start] = (max(end, old_end), max(velocity, old_velocity))
     for (track, pitch), hits in sorted(grouped.items()):
         starts = sorted(hits)
-        channel = [0, 0, 1, 2, 9, 3][track]
+        channel = [0, 0, 1, 2, 9, 3, 4, 5, 6][track]
         for i, start in enumerate(starts):
             end, velocity = hits[start]
             if i + 1 < len(starts):
