@@ -180,30 +180,29 @@ window.Geometry = (() => {
         adding: ["Halfway is a special place.", "A midpoint divides a segment into two equal lengths."],
         moving: ["Length meets width.", "Three points that are not all on one line enclose an area."],
         captions: ["Balance, in two dimensions.", "Three equal edges. Three equal angles."] },
-      { name: "Tetrahedron", vertices: 4, edges: 6, faces: 4, kind: "PLATONIC SOLID I", description: "Four equilateral triangles. The simplest solid.", target: [...triangle.map(p => [p[0], p[1], -h]), [0, 0, 3 * h]], add: 4, morph: 7, hold: 8,
+      { name: "Tetrahedron", vertices: 4, edges: 6, faces: 4, kind: "Platonic Solid I", description: "Four equilateral triangles. The simplest solid.", target: [...triangle.map(p => [p[0], p[1], -h]), [0, 0, 3 * h]], add: 4, morph: 7, hold: 8,
         adding: ["A midpoint offers a new possibility.", "Halfway along an edge, the distances to its two ends are equal."],
         moving: ["Beyond the plane lies volume.", "Four points can enclose space when they do not all lie in one plane."],
         captions: ["Tetrahedron. Four faces in perfect balance.", "Three equilateral triangles meet at every vertex."] },
-      { name: "Octahedron", vertices: 6, edges: 12, faces: 8, kind: "PLATONIC SOLID II", description: "Eight equilateral triangles, paired at an equator.", target: spherical(octa), add: 4.5, morph: 8, hold: 8,
+      { name: "Octahedron", vertices: 6, edges: 12, faces: 8, kind: "Platonic Solid III", description: "Eight equilateral triangles, paired at an equator.", target: spherical(octa), add: 4.5, morph: 8, hold: 8,
         adding: ["How else can triangles enclose space?", "The tetrahedron is only the first of three Platonic solids with triangular faces."],
         moving: ["A different meeting of triangles.", "In an octahedron, four equilateral triangles meet at each vertex."],
         captions: ["Octahedron. Eight facets, one rhythm.", "Six vertices. Twelve equal edges. Eight equilateral triangles."] },
-      { name: "Cube", vertices: 8, edges: 12, faces: 6, kind: "PLATONIC SOLID III", description: "Six squares. A familiar kind of perfection.", target: spherical(cube), add: 4.5, morph: 8, hold: 8,
+      { name: "Cube", vertices: 8, edges: 12, faces: 6, kind: "Platonic Solid II", description: "Six squares. A familiar kind of perfection.", target: spherical(cube), add: 4.5, morph: 8, hold: 8,
         adding: ["More corners need not mean more faces.", "The octahedron has 6 vertices and 8 faces; the cube has 8 vertices and 6 faces."],
         moving: ["A familiar symmetry takes shape.", "Three square faces meet at each corner of a cube."],
         captions: ["Cube. Six faces, beautifully familiar.", "Eight vertices. Twelve equal edges. Six perfect squares."] },
-      { name: "Icosahedron", vertices: 12, edges: 30, faces: 20, kind: "PLATONIC SOLID IV", description: "Twenty triangles. A step closer to a sphere.", target: spherical(ico), add: 5.5, morph: 9, hold: 9,
+      { name: "Icosahedron", vertices: 12, edges: 30, faces: 20, kind: "Platonic Solid V", description: "Twenty triangles. A step closer to a sphere.", target: spherical(ico), add: 5.5, morph: 9, hold: 9,
         adding: ["How many triangles can meet at a corner?", "Five can fold around a vertex; six would lie flat."],
         moving: ["More faces, the same regularity.", "Five equilateral triangles meet at every vertex of an icosahedron."],
         captions: ["Icosahedron. Twenty windows on symmetry.", "Twelve vertices. Thirty equal edges. Twenty triangular faces."] },
-      { name: "Dodecahedron", vertices: 20, edges: 30, faces: 12, kind: "PLATONIC SOLID V", description: "Twelve pentagons. Three meet at every corner.", target: spherical(dodeca), add: 7, morph: 10, hold: 11,
+      { name: "Dodecahedron", vertices: 20, edges: 30, faces: 12, kind: "Platonic Solid IV", description: "Twelve pentagons. Three meet at every corner.", target: spherical(dodeca), add: 7, morph: 10, hold: 11,
         adding: ["One more kind of face is possible.", "Regular pentagons have five equal sides and five equal angles."],
         moving: ["Five sides to a face. Three faces to a corner.", "Three regular pentagons meet at each vertex of a dodecahedron."],
         captions: ["Dodecahedron. Twelve pentagonal faces.", "Twenty vertices. Thirty equal edges. Twelve regular pentagons."] }
     ];
     definitions.forEach((stage, index) => {
       stage.dimension = Math.min(index, 3);
-      if (stage.dimension === 3) stage.kind = "PLATONIC SOLID";
       stage.seeds = [];
       if (index) {
         const previous = definitions[index - 1].target;
@@ -290,9 +289,13 @@ window.Geometry = (() => {
     stages.forEach((stage, index) => {
       stage.index = index;
       stage.start = start;
-      stage.duration = stage.add + stage.morph + stage.merge + stage.hold;
       stage.changedStart = Math.min(stage.vertices, stage.previousCount);
       stage.shapeCaptions = definitions.find(shape => shape.name === stage.name).captions;
+      // Reverse playback uses the first 2.6 seconds of a growth hold to
+      // highlight vertices. Keep a full reading pause outside that interval.
+      stage.hold = Math.max(stage.hold, captionDuration(stage.shapeCaptions) + (stage.direction === "grow" ? 2.6 : 0));
+      if (stage.pivot) stage.hold = Math.max(stage.hold, 2 * Math.max(captionDuration(originCaption(1)), captionDuration(originCaption(-1))));
+      stage.duration = stage.add + stage.morph + stage.merge + stage.hold;
       const small = stage.direction === "grow" ? stage.source.slice(0, stage.changedStart) : stage.target;
       const large = stage.direction === "grow" ? stage.target : stage.source;
       stage.mergeTargets = stage.seeds.map((_, i) => {
@@ -406,6 +409,18 @@ window.Geometry = (() => {
     return { ...advanceLoop(timeline, { time: playback.time, direction }, 0), time: playback.time, direction };
   }
 
+  function captionDuration(copy) {
+    return Math.max(5, 1 + copy.join(" ").trim().split(/\s+/).length / 2.5);
+  }
+
+  function originCaption(direction) {
+    return [
+      "One point. Two ways to explore.",
+      direction > 0 ? "To the right, compare the solids by increasing vertex count."
+        : "To the left, compare the solids by increasing face count."
+    ];
+  }
+
   function sampleTimeline(timeline, playback) {
     const stage = timeline.stages.find(s => playback.time < s.start + s.duration)
       || timeline.stages[timeline.stages.length - 1];
@@ -413,16 +428,16 @@ window.Geometry = (() => {
       ? (stage.direction === "grow" ? "shrink" : "grow") : stage.direction;
     const frame = sampleStage(stage, playback.time - stage.start, motion);
     const geometryPhase = frame.phase;
-    let displayStage = stage, phase = geometryPhase;
+    const previous = stage.index ? timeline.stages[stage.index - 1] : stage;
+    const sourceStage = playback.direction > 0 ? stage : previous;
+    const targetStage = playback.direction > 0 ? previous : stage;
+    let phase = geometryPhase;
     let focus = frame.arrivals;
     // Playback can follow either direction, but births always use midpoints
     // and removals always converge on surviving vertices.
     if (playback.direction > 0 && stage.direction !== "still") {
       const holdTime = frame.local - stage.add - stage.morph - stage.merge;
       const reverseHighlight = geometryPhase === "holding" && stage.direction === "grow" && holdTime < 2.6;
-      if (geometryPhase !== "holding" || reverseHighlight) {
-        displayStage = timeline.stages[stage.index - 1];
-      }
       if (reverseHighlight) {
         phase = "highlighting";
         focus = frame.emphasis.slice(stage.changedStart);
@@ -432,6 +447,11 @@ window.Geometry = (() => {
         focus = frame.visibility.slice(stage.changedStart);
       } else if (geometryPhase === "adding") phase = "merging";
     }
+    const retired = phase === "merging" && frame.visibility.slice(stage.changedStart).every(visible => visible === 0);
+    if (retired) phase = "holding";
+    const shapeComplete = phase === "holding";
+    const displayStage = retired ? targetStage : shapeComplete
+      ? (playback.direction > 0 && geometryPhase === "highlighting" ? previous : stage) : sourceStage;
     const node = timeline.nodes[timeline.nodes.length - 1 - displayStage.index];
     const position = timeToPosition(timeline, playback.time);
     const atCenter = displayStage.pivot && phase === "holding";
@@ -444,25 +464,19 @@ window.Geometry = (() => {
       paths[name] = { increasing, label: playback.direction > 0 ? `${text} \u2192` : `\u2190 ${text}` };
     }
     const increasing = paths[chapter].increasing;
-    let copy = displayStage.shapeCaptions;
-    if (playback.direction < 0) {
-      if (phase === "adding") copy = stage.adding;
-      else if (phase === "highlighting") copy = stage.highlighting;
-      else if (phase === "moving") copy = stage.moving;
-    } else if (phase === "adding" || phase === "highlighting") {
-      if ((displayStage.vertices - stage.vertices) * (displayStage.faces - stage.faces) < 0) {
+    let copy = shapeComplete ? displayStage.shapeCaptions : targetStage.shapeCaptions;
+    if (!shapeComplete && playback.direction < 0) {
+      copy = stage.direction === "grow" ? stage.adding : stage.highlighting;
+    } else if (!shapeComplete) {
+      if ((targetStage.vertices - sourceStage.vertices) * (targetStage.faces - sourceStage.faces) < 0) {
         copy = [
-          displayStage.vertices > stage.vertices ? "More corners need not mean more faces." : "More faces need not mean more corners.",
-          `${stage.name}: ${stage.vertices} vertices, ${stage.faces} faces. ${displayStage.name}: ${displayStage.vertices} vertices, ${displayStage.faces} faces.`
+          targetStage.vertices > sourceStage.vertices ? "More corners need not mean more faces." : "More faces need not mean more corners.",
+          `${sourceStage.name}: ${sourceStage.vertices} vertices, ${sourceStage.faces} faces. ${targetStage.name}: ${targetStage.vertices} vertices, ${targetStage.faces} faces.`
         ];
       }
     }
-    if (atCenter) copy = [
-      "One point. Two ways to explore.",
-      playback.direction > 0 ? "To the right, compare the solids by increasing vertex count."
-        : "To the left, compare the solids by increasing face count."
-    ];
-    return { ...frame, geometryPhase, phase, displayStage, node, position, chapter, increasing, paths, motion, focus, copy };
+    if (atCenter) copy = originCaption(playback.direction);
+    return { ...frame, geometryPhase, phase, displayStage, targetStage, shapeComplete, node, position, chapter, increasing, paths, motion, focus, copy };
   }
 
   function redirectFrame(frame, source, progress) {
@@ -470,11 +484,11 @@ window.Geometry = (() => {
     return {
       ...frame,
       points: source.map((point, i) => lerp(point, frame.points[i], routeBlend)),
-      phase: "moving", geometryPhase: "moving", routeBlend
+      phase: "moving", geometryPhase: "moving", shapeComplete: false, routeBlend
     };
   }
   return {
     add, sub, scale, dot, cross, length, normalize, lerp, distance2, smooth, rotate, hull,
-    makeStages, sampleStage, makeTimeline, positionToTime, timeToPosition, advanceLoop, reverseLoop, sampleTimeline, redirectFrame
+    makeStages, sampleStage, makeTimeline, positionToTime, timeToPosition, advanceLoop, reverseLoop, sampleTimeline, redirectFrame, captionDuration
   };
 })();

@@ -12,7 +12,7 @@
     playing: !reducedMotion.matches, speed: 1, orbit: !reducedMotion.matches,
     yaw: -0.16, pitch: 0.12, zoom: 1, orbitAngle: 0, dragging: false,
     width: 0, height: 0, nodeIndex: -1, labelKey: "", lastFrame: null, topologyKey: "",
-    topology: null, redirect: null
+    topology: null, redirect: null, completedShape: null
   };
   const colors = { green: [181, 229, 191], gold: [242, 199, 126] };
   const rgba = (rgb, alpha) => `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`;
@@ -64,6 +64,7 @@
     const time = G.positionToTime(timeline, position);
     Object.assign(state, G.advanceLoop(timeline, { time, direction: state.direction }, 0));
     state.redirect = null;
+    state.completedShape = null;
     state.topologyKey = "";
   }
 
@@ -177,9 +178,12 @@
   }
 
   function updateLabels(frame) {
-    const { displayStage: shape, phase, node, chapter, increasing } = frame;
+    if (!state.completedShape || frame.shapeComplete) state.completedShape = frame.displayStage;
+    const shape = state.completedShape;
+    const node = timeline.nodes[timeline.nodes.length - 1 - shape.index];
+    const { phase, chapter, increasing } = frame;
     if (state.nodeIndex !== node.index) {
-      $("shape-category").textContent = `${shape.kind} / ${String(node.index + 1).padStart(2, "0")}`;
+      $("shape-category").textContent = shape.kind;
       $("shape-name").textContent = shape.name;
       $("shape-description").textContent = shape.description;
       $("shape-stats").innerHTML = [["vertices", shape.vertices], ["edges", shape.edges], ["faces", shape.faces]]
@@ -191,13 +195,13 @@
       });
       if (document.activeElement !== $("seek")) revealNode(node.index);
     }
-    const labelKey = `${node.index}:${phase}:${state.direction}:${chapter}`;
+    const labelKey = `${node.index}:${frame.stage.index}:${phase}:${state.direction}:${chapter}`;
     if (state.labelKey !== labelKey) {
       $("caption").textContent = frame.copy[0];
       $("caption-detail").textContent = frame.copy[1];
       $("phase-label").textContent = phase === "moving" ? "Transforming" : phase === "merging" ? "Vertices meeting" : shape.name;
       document.querySelector(".phase-indicator").classList.toggle("adding", ["adding", "highlighting", "merging"].includes(phase));
-      $("shape-stats").setAttribute("aria-label", `${phase === "holding" ? "Shape" : "Destination"}: ${shape.vertices} vertices, ${shape.edges} edges, ${shape.faces} faces`);
+      $("shape-stats").setAttribute("aria-label", `${frame.shapeComplete ? "Shape" : "Last completed shape"}: ${shape.vertices} vertices, ${shape.edges} edges, ${shape.faces} faces`);
       $("path-vertices").classList.toggle("active", chapter === "vertices");
       $("path-faces").classList.toggle("active", chapter === "faces");
       $("path-vertices").textContent = frame.paths.vertices.label.toUpperCase();
@@ -228,10 +232,10 @@
     const center = [w * (mobile ? 0.5 : 0.625), h * (mobile ? 0.385 : 0.43)];
     const unit = Math.min(h * (mobile ? 0.125 : 0.225), w * (mobile ? 0.225 : 0.17)) * state.zoom;
     const { stage, geometryPhase: phase, points, progress, local, depthReveal } = frame;
-    // Take the shortest turn back to a face-on plane when leaving three dimensions.
+    // Open to an oblique view so depth motion is visible, then return face-on to the plane.
     const orbitYaw = Math.atan2(Math.sin(state.orbitAngle), Math.cos(state.orbitAngle));
-    const yaw = state.yaw + orbitYaw * depthReveal;
-    const pitch = state.pitch + 0.16 * depthReveal;
+    const yaw = state.yaw + (orbitYaw - 0.7) * depthReveal;
+    const pitch = state.pitch - 0.55 * depthReveal;
     const project = p => {
       const rotated = G.rotate(p, yaw, pitch);
       const perspective = 6.5 / (6.5 - rotated[2]);

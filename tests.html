@@ -17,6 +17,7 @@ const expected = {
   Tetrahedron: [4, 6, 4, 3], Octahedron: [6, 12, 8, 3], Cube: [8, 12, 6, 4],
   Icosahedron: [12, 30, 20, 3], Dodecahedron: [20, 30, 12, 5]
 };
+const ordinals = { Tetrahedron: "I", Cube: "II", Octahedron: "III", Dodecahedron: "IV", Icosahedron: "V" };
 try {
   equal(stages.slice(0, 8).map(s => s.vertices), [20, 12, 8, 6, 4, 3, 2, 1], "Descending vertex order");
   equal(stages.slice(7).map(s => s.faces), [0, 0, 1, 4, 6, 8, 12, 20], "Increasing face order");
@@ -29,6 +30,8 @@ try {
 
   for (const stage of stages) {
     const tag = stage.index + ": " + stage.name;
+    if (stage.dimension === 3) equal(stage.kind, "Platonic Solid " + ordinals[stage.name], tag + " fixed Roman numeral");
+    assert(!stage.kind.includes("/"), tag + " no animation index in category");
     const spec = expected[stage.name], hull = G.hull(stage.target);
     equal([stage.target.length, hull.edges.length, hull.faces.length], spec.slice(0, 3), tag + " topology");
     assert(hull.faces.every(face => face.ids.length === spec[3]), tag + " polygon sizes");
@@ -166,7 +169,9 @@ try {
     assert(a.points.every((p, i) => near(p, b.points[i])), "Geometry remains continuous across a bounce");
   }
   const visited = [];
-  for (let elapsed = 0; elapsed <= timeline.period; elapsed += 0.25) {
+  const captionEpisodes = [];
+  let captionStart = 0, lastCopy = null;
+  for (let elapsed = 0; elapsed <= timeline.period; elapsed += 0.05) {
     const state = G.advanceLoop(timeline, playback, elapsed);
     const frame = G.sampleTimeline(timeline, state);
     equal(frame.paths.vertices.label, state.direction > 0 ? "Increasing vertices \u2192" : "\u2190 Decreasing vertices",
@@ -176,6 +181,11 @@ try {
     assert(frame.increasing === frame.paths[frame.chapter].increasing, "Active direction agrees with its path heading");
     assert(state.time >= timeline.minTime - 1e-9 && state.time <= timeline.maxTime + 1e-9, "Playback stays on the timeline");
     assert(frame.copy.length === 2 && frame.copy.every(text => typeof text === "string" && text.length), "Direction-aware learner captions");
+    if (lastCopy && frame.copy.join("\n") !== lastCopy.join("\n")) {
+      captionEpisodes.push({ copy: lastCopy, duration: elapsed - captionStart });
+      captionStart = elapsed;
+    }
+    lastCopy = frame.copy;
     assert(frame.copy.every(text => !/first.*decreasing|now follow increasing face/i.test(text)), "No obsolete chapter narration");
     const original = G.sampleStage(frame.stage, state.time - frame.stage.start, frame.motion);
     assert(frame.points.every((p, i) => near(p, original.points[i])), "Playback uses the correct addition or removal route");
@@ -194,13 +204,26 @@ try {
       });
     }
     if (frame.phase === "holding") {
-      assert(frame.points.length === frame.displayStage.vertices, "Reverse hold labels match the visible solid");
+      assert(frame.shapeComplete, "Holding is a completed shape");
+      assert(frame.visibility.filter(v => v > 0).length === frame.displayStage.vertices, "Completed labels match visible vertices");
       if (visited[visited.length - 1] !== frame.node.index) visited.push(frame.node.index);
+    } else {
+      assert(!frame.shapeComplete, "Transitions do not report completion");
+      const sourceIndex = state.direction > 0 ? frame.stage.index : Math.max(0, frame.stage.index - 1);
+      assert(frame.displayStage.index === sourceIndex, "Transition details stay on the last completed source");
     }
     if (frame.phase === "adding") assert(frame.motion === "grow", "Reverse addition has the correct legend");
     if (frame.phase === "merging") assert(frame.motion === "shrink", "Reverse merging has the correct legend");
   }
   equal(visited, [7,8,9,10,11,12,13,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0,1,2,3,4,5,6,7], "Complete continuous bounce itinerary");
+  for (const episode of captionEpisodes) {
+    const minimum = G.captionDuration(episode.copy);
+    assert(episode.duration + 0.051 >= minimum,
+      "Caption too brief (" + episode.duration.toFixed(2) + "s, needs " + minimum.toFixed(2) + "s): " + episode.copy[0]);
+  }
+  const cubeInsight = captionEpisodes.find(episode => episode.copy[0] === "More corners need not mean more faces."
+    && episode.copy[1].startsWith("Octahedron:"));
+  assert(cubeInsight && cubeInsight.duration >= 9.7, "Octahedron-to-cube insight stays through the morph");
   for (const stage of stages.filter(s => s.direction !== "still")) {
     const direction = stage.direction === "shrink" ? -1 : 1;
     let startingDistances;
@@ -221,6 +244,7 @@ try {
     equal(turnStart.points, before.points, "Mid-transition reversal begins at the displayed positions");
     assert(turnEnd.points.every((p, i) => near(p, after.points[i])), "Mid-transition reversal joins the new route");
     equal(turnStart.visibility, before.visibility, "No vertex disappears during redirection");
+    assert(!turnStart.shapeComplete && !turnEnd.shapeComplete, "Redirecting does not prematurely change completed-shape labels");
     for (const progress of [0.25, 0.5, 0.75]) {
       assert(G.redirectFrame(after, before.points, progress).points.flat().every(Number.isFinite), "Finite smooth route redirection");
     }
@@ -228,6 +252,7 @@ try {
   messages.push("PASS: one centered row, both directions, reverse captions, exact bounces, 100 loops and the full itinerary");
   messages.push("PASS: both path headings follow direction; manual reversal preserves geometry and position, including at endpoints");
   messages.push("PASS: removals meet surviving vertices before fading in both directions; midpoint additions are unchanged; mid-transition reversals redirect smoothly");
+  messages.push("PASS: details change only on completion; fixed Platonic Solid I-V labels; every uninterrupted caption meets its reading budget");
   document.getElementById("results").textContent = messages.join("\n");
   document.documentElement.dataset.result = "passed";
 } catch (error) {

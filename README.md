@@ -63,10 +63,18 @@ are not themselves Platonic solids. The wireframe blends only the source and
 destination edges, never temporary hull triangulation diagonals. Final faces
 are actual polygons. Original edges fade early during growth, and late during
 merging so changes in connectivity remain readable.
-The statistics describe the destination shape during a transition.
+The timeline highlight and left-hand description and statistics stay with the
+last completed shape during introductions, morphs, and merges. They switch only
+when the next shape is complete, including after a mid-transition reversal.
+The Platonic solids have fixed Roman numerals in increasing face-count order:
+tetrahedron I, cube II, octahedron III, dodecahedron IV, and icosahedron V.
 Captions and highlights follow the actual direction of travel, including when
 the geometry is played backward. They explore dimension, equal lengths, volume,
 and the arrangement of regular faces around a vertex.
+Transition captions remain visible through the morph instead of changing with
+every short phase. At normal pace, viewing pauses allow at least five seconds
+and a reading budget based on caption length; the opening point gets a full
+reading pause as well.
 
 ## Controls
 
