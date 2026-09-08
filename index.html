@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101919">
+  <title>Becoming / A study of Platonic solids</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="geometry.js" defer></script>
+  <script src="animation.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <a class="wordmark" href="./" aria-label="Becoming home"><span class="brand-symbol" aria-hidden="true">&#10035;</span> BECOMING<span class="wordmark-note">A GEOMETRIC STUDY</span></a>
+    <button class="quiet-button" id="fullscreen" type="button" aria-label="Enter fullscreen">Expand <span aria-hidden="true">&#8599;</span></button>
+  </header>
+
+  <main>
+    <section class="scene" aria-label="Interactive three-dimensional geometry animation">
+      <canvas id="scene" tabindex="0" aria-label="3D solid. Drag or use arrow keys to rotate; scroll or use plus and minus to zoom."></canvas>
+      <div class="introduction">
+        <p class="eyebrow">TWO ORDERS. FIVE PERFECT SOLIDS.</p>
+        <h1>Everything<br>takes shape.</h1>
+        <p class="intro-copy">From a solid to a point, and outward again.<br>Two ways to discover the same five solids.</p>
+      </div>
+      <div class="phase-indicator"><span id="phase-dot"></span><span id="phase-label">A moment to admire</span></div>
+      <div class="shape-info" aria-live="polite" aria-atomic="true">
+        <p class="eyebrow" id="shape-category">PLATONIC SOLID / 01</p>
+        <h2 id="shape-name">Dodecahedron</h2>
+        <p id="shape-description">Twelve pentagons. Three meet at every corner.</p>
+        <div class="shape-stats" id="shape-stats"></div>
+      </div>
+      <div class="scene-caption">
+        <p id="caption">Twenty vertices. A journey toward one.</p>
+        <span id="caption-detail">First, compare the solids by decreasing vertex count.</span>
+      </div>
+      <div class="view-tools">
+        <button id="orbit" class="quiet-button" type="button" aria-pressed="true"><span class="orbit-icon" aria-hidden="true">&#8635;</span> Auto-orbit</button>
+        <button id="reset-view" class="quiet-button" type="button">Reset view</button>
+        <span class="drag-hint">DRAG TO ROTATE &middot; SCROLL TO ZOOM</span>
+      </div>
+      <div class="legend"><span class="legend-dot existing"></span> Existing <span class="legend-dot added"></span> <span id="highlight-label">Merging points</span></div>
+    </section>
+
+    <section class="playback" aria-label="Animation playback">
+      <div class="timeline-heading"><span class="eyebrow">TWO WAYS TO COMPARE</span><span class="timeline-note" id="order-note">First: decreasing vertex count.</span></div>
+      <div class="timeline-chapter active" id="chapter-vertices">
+        <div class="chapter-heading"><span>01 / BY VERTICES</span><span>20 &rarr; 1</span></div>
+        <div class="stage-navigation" id="stages-vertices" role="group" aria-label="Descending vertex count: dodecahedron to point"></div>
+      </div>
+      <div class="timeline-chapter" id="chapter-faces">
+        <div class="chapter-heading"><span>02 / BY FACES</span><span>POINT &rarr; 20 FACES</span></div>
+        <div class="stage-navigation" id="stages-faces" role="group" aria-label="Increasing face count: point to icosahedron"></div>
+      </div>
+      <label class="sr-only" for="seek">Animation position</label>
+      <input id="seek" class="seek" type="range" min="0" max="100" step="0.01" value="0">
+      <div class="transport">
+        <div class="transport-left">
+          <button id="play" class="play-button" type="button" aria-label="Pause animation"><span id="play-icon" aria-hidden="true">&#10074;&#10074;</span><span id="play-text">Pause</span></button>
+          <button id="restart" class="quiet-button" type="button" aria-label="Restart animation">&#8634; <span>Restart</span></button>
+          <span class="timecode"><span id="elapsed">0:00</span><span class="time-divider">/</span><span id="duration">0:00</span></span>
+        </div>
+        <div class="transport-right">
+          <label for="speed">PACE</label>
+          <select id="speed" aria-label="Playback speed">
+            <option value="0.5">0.5&times; &middot; Reflective</option>
+            <option value="1" selected>1&times; &middot; Unhurried</option>
+            <option value="1.5">1.5&times; &middot; Flowing</option>
+            <option value="2">2&times; &middot; Brisk</option>
+          </select>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer><span>SPACE &rarr; POINT &rarr; SPACE</span><span>Created by <a href="https://github.com/revodavid/becoming">@revodavid</a>, GitHub Copilot CLI, and GPT-6 Astra</span></footer>
+  <noscript>This animation needs JavaScript enabled in your browser.</noscript>
+</body>
+</html>

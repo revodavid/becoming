@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Becoming / Geometry checks</title>
+<h1>Geometry checks</h1>
+<pre id="results">Running...</pre>
+<script src="geometry.js"></script>
+<script>
+"use strict";
+const G = Geometry, stages = G.makeStages(), messages = [];
+const assert = (condition, message) => { if (!condition) throw new Error(message); };
+const equal = (actual, expected, message) => assert(JSON.stringify(actual) === JSON.stringify(expected), message);
+const edgeKey = (a, b) => [a, b].sort((x, y) => x - y).join("-");
+const near = (a, b) => G.distance2(a, b) < 1e-16;
+const expected = {
+  Point: [1, 0, 0, 0], Line: [2, 1, 0, 0], Triangle: [3, 3, 1, 3],
+  Tetrahedron: [4, 6, 4, 3], Octahedron: [6, 12, 8, 3], Cube: [8, 12, 6, 4],
+  Icosahedron: [12, 30, 20, 3], Dodecahedron: [20, 30, 12, 5]
+};
+try {
+  equal(stages.slice(0, 8).map(s => s.vertices), [20, 12, 8, 6, 4, 3, 2, 1], "Descending vertex order");
+  equal(stages.slice(7).map(s => s.faces), [0, 0, 1, 4, 6, 8, 12, 20], "Increasing face order");
+  equal(stages.map(s => s.name), [
+    "Dodecahedron", "Icosahedron", "Cube", "Octahedron", "Tetrahedron", "Triangle", "Line", "Point",
+    "Line", "Triangle", "Tetrahedron", "Cube", "Octahedron", "Dodecahedron", "Icosahedron"
+  ], "Complete journey");
+  assert(stages.filter(s => s.pivot).length === 1, "Exactly one point pivot");
+  messages.push("PASS: both orders and one shared pivot");
+
+  for (const stage of stages) {
+    const tag = stage.index + ": " + stage.name;
+    const spec = expected[stage.name], hull = G.hull(stage.target);
+    equal([stage.target.length, hull.edges.length, hull.faces.length], spec.slice(0, 3), tag + " topology");
+    assert(hull.faces.every(face => face.ids.length === spec[3]), tag + " polygon sizes");
+    if (stage.dimension >= 2) {
+      const lengths = hull.edges.map(([a, b]) => G.length(G.sub(stage.target[a], stage.target[b])));
+      assert(Math.max(...lengths) - Math.min(...lengths) < 1e-7, tag + " regular edges");
+      for (const face of hull.faces) {
+        const center = G.scale(face.ids.reduce((p, i) => G.add(p, stage.target[i]), [0, 0, 0]), 1 / face.ids.length);
+        const radii = face.ids.map(i => G.length(G.sub(stage.target[i], center)));
+        assert(Math.max(...radii) - Math.min(...radii) < 1e-7, tag + " regular polygon");
+      }
+    }
+    if (stage.index) {
+      const previous = stages[stage.index - 1];
+      assert(Math.abs(stage.start - previous.start - previous.duration) < 1e-9, tag + " contiguous timing");
+      const incoming = stage.source.slice(0, stage.previousCount);
+      assert(previous.target.every(p => incoming.some(q => near(p, q))), tag + " positional continuity");
+      assert(stage.source.length === stage.destination.length, tag + " vertex correspondence");
+      assert(stage.source.every((p, i) => G.distance2(p, stage.destination[i]) > 1e-12), tag + " all vertices move");
+
+      const small = stage.direction === "shrink" ? [...stage.target] : stage.source.slice(0, stage.previousCount);
+      const segments = new Set(G.hull(small).edges.map(([a, b]) => edgeKey(a, b)));
+      for (const seed of stage.seeds) {
+        if (small.length === 1) {
+          assert(seed.edge === null && near(seed.position, small[0]), tag + " initial duplication");
+        } else {
+          assert(seed.edge && seed.edge.every(i => i < small.length), tag + " midpoint endpoints already exist");
+          const [a, b] = seed.edge, key = edgeKey(a, b);
+          assert(segments.has(key), tag + " midpoint lies on an existing segment");
+          assert(near(seed.position, G.lerp(small[a], small[b], 0.5)), tag + " exact midpoint");
+          segments.delete(key);
+          segments.add(edgeKey(a, small.length));
+          segments.add(edgeKey(small.length, b));
+        }
+        small.push(seed.position);
+      }
+      const expanded = stage.direction === "shrink" ? stage.destination : stage.source;
+      assert(small.every((p, i) => near(p, expanded[i])), tag + " midpoint coordinates used by the morph");
+    }
+
+    const allowedEdges = new Set([...stage.sourceTopology.edges, ...stage.topology.edges].map(([a, b]) => edgeKey(a, b)));
+    const times = [0, stage.add * 0.8, stage.add, stage.add + stage.morph * 0.05,
+      stage.add + stage.morph * 0.5, stage.add + stage.morph * 0.95,
+      stage.add + stage.morph, stage.add + stage.morph + stage.merge * 0.5, stage.duration - 0.01];
+    for (const t of times) {
+      const frame = G.sampleStage(stage, t);
+      assert(frame.points.flat().every(Number.isFinite), tag + " finite positions");
+      assert(frame.visibility.every(v => v >= 0 && v <= 1), tag + " valid visibility");
+      assert(frame.emphasis.every(v => v >= 0 && v <= 1), tag + " valid highlights");
+      assert(frame.depthReveal >= 0 && frame.depthReveal <= 1, tag + " camera blend");
+      for (const [key, opacity] of frame.edges) {
+        assert(allowedEdges.has(key), tag + " no transient hull diagonal");
+        assert(opacity >= 0 && opacity <= 1, tag + " edge opacity");
+        if (opacity > 0) assert(key.split("-").every(i => Number(i) < frame.points.length), tag + " edge indices");
+      }
+      if (frame.phase === "holding") {
+        assert(frame.points.length === stage.vertices, tag + " final vertex count");
+        assert(frame.edges.size === stage.edges, tag + " final edge count");
+      }
+      if (frame.phase === "highlighting" || frame.phase === "moving") {
+        if (stage.direction === "shrink") assert(frame.visibility.every(v => v === 1), tag + " no premature removal");
+      }
+    }
+    if (stage.direction === "shrink") {
+      const settled = G.sampleStage(stage, stage.add + stage.morph + stage.merge - 1e-6);
+      assert(settled.visibility.slice(stage.vertices).every(v => v < 1e-8), tag + " extras fade before removal");
+      assert(stage.target.every((p, i) => near(p, settled.points[i])), tag + " survivors remain continuous");
+    }
+    messages.push("PASS: " + tag + " - geometry, midpoints, motion, edges and phase boundaries");
+  }
+  const largeGrowth = stages.find(s => s.chapter === "faces" && s.name === "Dodecahedron");
+  assert(largeGrowth.seeds.length === 14, "Octahedron to dodecahedron introduces 14 vertices");
+  assert(largeGrowth.seeds.some(seed => seed.edge.some(i => i >= largeGrowth.previousCount)), "Repeated bisection is exercised");
+  const duration = stages.reduce((sum, stage) => sum + stage.duration, 0);
+  messages.push("PASS: 14-vertex growth bisects existing subsegments; duration " + duration.toFixed(2) + " seconds");
+  document.getElementById("results").textContent = messages.join("\n");
+  document.documentElement.dataset.result = "passed";
+} catch (error) {
+  messages.push("FAIL: " + error.message);
+  document.getElementById("results").textContent = messages.join("\n");
+  document.documentElement.dataset.result = "failed";
+  throw error;
+}
+</script>
+</html>
