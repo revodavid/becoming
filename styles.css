@@ -13,7 +13,7 @@ body { margin: 0; background: var(--background); color: var(--text); font-family
 button, select, input { font: inherit; }
 button, select { cursor: pointer; }
 button { color: inherit; }
-button:focus-visible, select:focus-visible, input:focus-visible, canvas:focus-visible, a:focus-visible { outline: 2px solid var(--gold); outline-offset: 5px; }
+button:focus-visible, select:focus-visible, input:focus-visible, #scene-interaction:focus-visible, a:focus-visible { outline: 2px solid var(--gold); outline-offset: 5px; }
 button:disabled { cursor: default; opacity: .4; }
 .masthead { height: 82px; margin: 0 4%; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; }
 .wordmark { display: flex; align-items: center; gap: 13px; color: var(--text); text-decoration: none; letter-spacing: .22em; font-size: 15px; font-weight: 600; }
@@ -24,9 +24,11 @@ button:disabled { cursor: default; opacity: .4; }
 .masthead .quiet-button span { font-size: 21px; padding-left: 10px; }
 main { max-width: 1800px; margin: auto; }
 .scene { position: relative; height: calc(100svh - 320px); min-height: 480px; max-height: 1000px; overflow: hidden; }
-#scene { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
-#scene:active { cursor: grabbing; }
-.introduction { position: absolute; top: 9%; left: 4%; pointer-events: none; }
+#scene { display: block; width: 100%; height: 100%; pointer-events: none; }
+/* A separate hit area lets the browser scroll gestures that begin over text. */
+#scene-interaction { position: absolute; top: 8%; bottom: 25%; left: 34%; right: 4%; touch-action: none; cursor: grab; }
+#scene-interaction:active { cursor: grabbing; }
+.introduction { position: absolute; top: 9%; left: 4%; }
 .eyebrow { color: var(--muted); font-size: 9px; letter-spacing: .19em; font-weight: 500; margin: 0 0 19px; }
 h1 { font-family: Georgia, "Times New Roman", serif; font-size: clamp(38px, 4vw, 65px); font-weight: 400; letter-spacing: -.045em; line-height: 1.05; margin: 0 0 21px; }
 .intro-copy { color: var(--muted); font-size: 12px; line-height: 1.9; margin: 0; }
@@ -34,7 +36,7 @@ h1 { font-family: Georgia, "Times New Roman", serif; font-size: clamp(38px, 4vw,
 #phase-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--green); }
 .phase-indicator.adding { color: var(--gold); border-color: #6d5939; }
 .phase-indicator.adding #phase-dot { background: var(--gold); box-shadow: 0 0 9px #f2c77e70; }
-.shape-info { position: absolute; left: 4%; bottom: 12%; pointer-events: none; max-width: 270px; }
+.shape-info { position: absolute; left: 4%; bottom: 12%; max-width: 270px; }
 .shape-info .eyebrow { color: var(--green); margin-bottom: 12px; }
 h2 { font: 400 31px Georgia, "Times New Roman", serif; letter-spacing: -.03em; margin: 0 0 12px; }
 #shape-description { font-size: 11px; color: var(--muted); line-height: 1.6; margin: 0; }
@@ -42,7 +44,7 @@ h2 { font: 400 31px Georgia, "Times New Roman", serif; letter-spacing: -.03em; m
 .stat { display: flex; flex-direction: column; gap: 6px; }
 .stat strong { font-size: 20px; font-weight: 400; font-variant-numeric: tabular-nums; }
 .stat span { font-size: 8px; letter-spacing: .14em; color: var(--muted); }
-.scene-caption { position: absolute; bottom: 15%; left: 35%; width: 50%; text-align: center; pointer-events: none; }
+.scene-caption { position: absolute; bottom: 15%; left: 35%; width: 50%; text-align: center; }
 .scene-caption p { margin: 0 0 9px; font: 400 19px Georgia, "Times New Roman", serif; }
 .scene-caption > span { color: var(--muted); font-size: 11px; line-height: 1.6; display: block; }
 .view-tools { position: absolute; right: 4%; bottom: 3%; display: flex; align-items: center; gap: 12px; }
@@ -107,6 +109,7 @@ footer a:hover { color: var(--green); }
   .masthead { height: 65px; }
   .wordmark { font-size: 12px; }
   .scene { height: 610px; min-height: 610px; }
+  #scene-interaction { top: 135px; bottom: 260px; left: 5%; right: 5%; }
   .introduction { top: 25px; }
   .introduction .eyebrow { font-size: 7px; margin-bottom: 13px; }
   h1 { font-size: 34px; }

@@ -398,6 +398,152 @@
       assert(d.documentElement.scrollWidth <= 360, "Narrow layout no page overflow");
       const button = $("music").getBoundingClientRect(), pace = $("speed").getBoundingClientRect();
       assert(button.right <= pace.left && pace.right <= 360, "Narrow speaker and pace controls do not overlap");
+      const interaction = $("scene-interaction");
+      assert(interaction.tabIndex === 0 && $("scene").getAttribute("aria-hidden") === "true" &&
+        !$("scene").hasAttribute("tabindex"), "Keyboard interaction belongs to the object area, not the full canvas");
+      for (const [width, height] of [[844, 390], [390, 844], [320, 568], [1280, 800]]) {
+        app.width = width; app.height = height;
+        await wait(50);
+        assert(w.getComputedStyle($("scene")).pointerEvents === "none", "Background canvas never traps page gestures");
+        for (const selector of [".introduction", ".shape-info", ".scene-caption"]) {
+          const panel = d.querySelector(selector);
+          panel.scrollIntoView({ block: "center" });
+          const rect = panel.getBoundingClientRect();
+          const hit = d.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          assert(hit && panel.contains(hit), `${width}x${height}: ${selector} catches its own gestures`);
+          for (let element = hit; element; element = element.parentElement) {
+            assert(w.getComputedStyle(element).touchAction !== "none", selector + " permits native touch scrolling");
+          }
+          const wheel = new w.WheelEvent("wheel", { deltaY: 80, bubbles: true, cancelable: true });
+          hit.dispatchEvent(wheel);
+          assert(!wheel.defaultPrevented, selector + " does not zoom instead of scrolling");
+        }
+        interaction.scrollIntoView({ block: "center" });
+        const rect = interaction.getBoundingClientRect();
+        assert(d.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) === interaction,
+          `${width}x${height}: object-area center remains draggable`);
+        assert(w.getComputedStyle(interaction).touchAction === "none", "Only object area takes over touch gestures");
+        interaction.focus();
+        const key = new w.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true });
+        interaction.dispatchEvent(key);
+        assert(key.defaultPrevented && d.activeElement === interaction && $("orbit").getAttribute("aria-pressed") === "false",
+          "Object-area keyboard rotation still works");
+        const wheel = new w.WheelEvent("wheel", { deltaY: 20, bubbles: true, cancelable: true });
+        interaction.dispatchEvent(wheel);
+        assert(wheel.defaultPrevented, "Object-area wheel zoom still works");
+      }
+      messages.push("PASS: landscape/portrait/desktop object-only hit area, scrollable text, keyboard rotation and scoped wheel zoom");
+      if (player.enabled) $("music").click();
+      if ($("play-text").textContent === "Pause") $("play").click();
+      const geometry = w.Geometry, sampleTimeline = geometry.sampleTimeline, occluded = geometry.occluded;
+      const raf = w.requestAnimationFrame, context = $("scene").getContext("2d"), stroke = context.stroke, fill = context.fill;
+      const addColorStop = w.CanvasGradient.prototype.addColorStop;
+      let nextTick, transport, forceView, hidden = false, strokes = [], fills = [], glows = [];
+      w.requestAnimationFrame = callback => { nextTick = callback; return 0; };
+      geometry.sampleTimeline = (model, state) => {
+        transport = state;
+        const frame = sampleTimeline(model, state);
+        return forceView === undefined ? frame : { ...frame, viewBlend: forceView };
+      };
+      geometry.occluded = (...args) => { hidden = occluded(...args); return hidden; };
+      const capture = (records, style) => {
+        const match = typeof style === "string" && style.match(/^rgba\(181,\s*229,\s*191,\s*([\d.]+)\)$/);
+        if (match) records.push({ hidden, alpha: Number(match[1]) });
+      };
+      context.stroke = function (...args) { capture(strokes, this.strokeStyle); return stroke.apply(this, args); };
+      context.fill = function (...args) { capture(fills, this.fillStyle); return fill.apply(this, args); };
+      w.CanvasGradient.prototype.addColorStop = function (offset, color) {
+        if (offset === 0) capture(glows, color);
+        return addColorStop.call(this, offset, color);
+      };
+      try {
+        for (let attempt = 0; attempt < 50 && !nextTick; attempt++) await wait(20);
+        assert(nextTick && transport, "Can step the actual animation loop deterministically");
+        let timestamp = transport.lastFrame;
+        const step = seconds => {
+          timestamp += seconds * 1000;
+          strokes = []; fills = []; glows = [];
+          const callback = nextTick; nextTick = null;
+          callback(timestamp);
+          assert(nextTick, "Animation continues requesting frames");
+        };
+        const seekTime = (time, direction) => {
+          if (player.snapshot.anchor.direction !== direction) $("reverse").click();
+          $("seek").value = G.timeToPosition(timeline, time);
+          $("seek").dispatchEvent(new w.Event("input", { bubbles: true }));
+          step(0);
+        };
+        $("reset-view").click();
+        if ($("orbit").getAttribute("aria-pressed") !== "true") $("orbit").click();
+        for (const stage of timeline.stages.filter(s => s.fromDimension === 3 && s.dimension === 3 && s.index)) {
+          for (const direction of [-1, 1]) {
+            for (const local of [stage.add / 2, stage.add + stage.morph / 2,
+              stage.add + stage.morph + stage.merge / 2, stage.duration - 2]) {
+              seekTime(stage.start + local, direction);
+              for (const speed of [0.5, 1, 2]) {
+                $("speed").value = speed; $("speed").dispatchEvent(new w.Event("change", { bubbles: true }));
+                const angle = transport.orbitAngle;
+                step(0.05);
+                assert(near(transport.orbitAngle, angle), "Paused focusing, defocusing, and viewing never rotates");
+                $("play").click();
+                step(0.05);
+                assert(near(transport.orbitAngle - angle, 0.05 * speed * 0.14, 1e-10),
+                  "Orbit speed is identical across phases, directions, vertex counts, and pace settings");
+                $("play").click();
+              }
+            }
+          }
+        }
+        const tetrahedron = timeline.stages.find(s => s.name === "Tetrahedron" && s.fromDimension === 2);
+        seekTime(tetrahedron.start + tetrahedron.duration - 3, -1);
+        const tetraAngle = transport.orbitAngle;
+        $("play").click(); step(0.05); $("play").click();
+        assert(transport.orbitAngle > tetraAngle, "The first completed 3D solid also auto-orbits");
+        $("orbit").click();
+        const stoppedAngle = transport.orbitAngle;
+        $("play").click(); step(0.05); $("play").click();
+        assert(transport.orbitAngle === stoppedAngle, "Auto-orbit toggle still prevents rotation");
+        $("reset-view").click();
+        let hiddenVertices = 0;
+        for (const node of timeline.nodes.filter(n => n.stage.dimension === 3)) {
+          seekTime(node.time, 1);
+          assert(sampleTimeline(timeline, transport).viewBlend === 1, "Completed solid uses the opaque view");
+          const opaqueStrokes = strokes, opaqueFills = fills, opaqueGlows = glows;
+          assert(opaqueStrokes.some(s => s.hidden) && opaqueStrokes.some(s => !s.hidden), "Renderer classifies rear and front edges");
+          assert(opaqueFills.length === node.stage.vertices && opaqueFills.some(s => !s.hidden),
+            node.stage.name + " renders every vertex, with exposed corners");
+          hiddenVertices += opaqueFills.filter(s => s.hidden).length;
+          const solidPixels = $("scene").toDataURL();
+          forceView = 0; step(0); forceView = undefined;
+          assert($("scene").toDataURL() !== solidPixels, "Solid and transparent views render different face opacity");
+          for (const [opaque, transparent] of [[opaqueStrokes, strokes], [opaqueFills, fills]]) {
+            assert(opaque.length === transparent.length, "Occlusion retains rather than deletes geometry");
+            // Canvas serializes colors to strings that round-trip an 8-bit alpha.
+            opaque.forEach((mark, i) => assert(Math.abs(Math.round(mark.alpha * 255)
+              - Math.round(transparent[i].alpha * (mark.hidden ? 0.04 : 1) * 255)) <= (mark.hidden ? 1 : 0),
+              `${node.stage.name} mark ${i}: hidden=${mark.hidden}, opaque=${mark.alpha}, transparent=${transparent[i].alpha}; expected 4% for hidden geometry, unchanged otherwise`));
+          }
+          assert(hiddenVertices > 0, "Occlusion coverage includes hidden vertices, not only hidden edges");
+          assert(opaqueGlows.length === glows.length && glows.length === node.stage.vertices, "Every vertex retains its glow");
+          opaqueGlows.forEach((glow, i) => assert(near(glow.alpha, glows[i].alpha * (glow.hidden ? 0.04 : 1), 1e-10),
+            "Rear vertex glows fade along with their points, rather than shining through opaque faces"));
+        }
+        const growth = timeline.stages.find(s => s.direction === "grow" && s.fromDimension === 3);
+        seekTime(growth.start + growth.add + growth.morph + 1.3, -1);
+        const beforeReverse = $("scene").toDataURL();
+        $("reverse").click(); step(0);
+        assert($("scene").toDataURL() === beforeReverse, "Paused mid-defocus reversal does not flash or alter the picture");
+        step(0.1);
+        assert($("scene").toDataURL() === beforeReverse, "Paused redirection retains face, edge, and vertex opacity");
+        messages.push("PASS: actual renderer dims hidden edges/vertices, preserves exposed geometry, ramps faces, and reverses without flashes");
+        messages.push("PASS: steady auto-orbit across both directions, every 3D vertex count, focus/morph/defocus/viewing, pause, toggle, and pace");
+      } finally {
+        geometry.sampleTimeline = sampleTimeline; geometry.occluded = occluded;
+        context.stroke = stroke; context.fill = fill; w.requestAnimationFrame = raf;
+        w.CanvasGradient.prototype.addColorStop = addColorStop;
+        $("restart").click(); $("play").click();
+        if (nextTick) raf.call(w, nextTick);
+      }
       await player.dispose();
     }
     document.body.dataset.result = "pass";

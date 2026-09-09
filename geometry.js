@@ -10,7 +10,10 @@ window.Geometry = (() => {
   const normalize = a => scale(a, 1 / (length(a) || 1));
   const lerp = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
   const distance2 = (a, b) => dot(sub(a, b), sub(a, b));
-  const smooth = t => { t = Math.max(0, Math.min(1, t)); return t * t * t * (t * (t * 6 - 15) + 10); };
+  const smooth = t => {
+    t = Math.max(0, Math.min(1, t));
+    return Math.max(0, Math.min(1, t * t * t * (t * (t * 6 - 15) + 10)));
+  };
 
   function rotate(p, yaw, pitch, roll = 0) {
     const x = p[0] * Math.cos(roll) - p[1] * Math.sin(roll);
@@ -74,6 +77,26 @@ window.Geometry = (() => {
       }
     }
     return { faces, edges: [...edges.values()] };
+  }
+
+  function isBoundaryEdge(points, a, b) {
+    const edge = sub(points[b], points[a]), size = length(edge), epsilon = 1e-6;
+    if (size < epsilon) return false;
+    const direction = scale(edge, 1 / size);
+    const u = normalize(cross(direction, Math.abs(direction[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0]));
+    const v = cross(direction, u), angles = [];
+    for (const point of points) {
+      const offset = sub(point, points[a]), x = dot(offset, u), y = dot(offset, v);
+      if (Math.hypot(x, y) > epsilon) angles.push(Math.atan2(y, x));
+    }
+    if (angles.length <= 1) return true;
+    angles.sort((x, y) => x - y);
+    // Viewed along a boundary edge, the solid fits in a wedge narrower than
+    // a half-turn. Face diagonals and interior chords do not satisfy this.
+    return angles.some((angle, i) => {
+      const next = i + 1 < angles.length ? angles[i + 1] : angles[0] + Math.PI * 2;
+      return next - angle > Math.PI + epsilon;
+    });
   }
 
   // Minimum-cost matching keeps vertex identities intact rather than
@@ -352,14 +375,33 @@ window.Geometry = (() => {
       if (phase === "highlighting") return arrivals[i - stage.changedStart];
       return phase === "holding" ? 1 - smooth(holdTime / 2.6) : 1;
     });
-    let edges = new Map((phase === "adding" || phase === "highlighting" ? stage.sourceTopology : stage.topology).edges
-      .map(([a, b]) => [`${a}-${b}`, 1]));
-    if (phase === "moving") {
-      const fade = Math.min(1.2, stage.morph * 0.2);
-      const blend = smooth((local - stage.add - (shrinking ? stage.morph - fade : 0)) / fade);
-      const sourceEdges = new Set(stage.sourceTopology.edges.map(([a, b]) => `${a}-${b}`));
-      for (const key of edges.keys()) if (!sourceEdges.has(key)) edges.set(key, blend);
-      for (const key of sourceEdges) if (!edges.has(key)) edges.set(key, 1 - blend);
+    const edges = new Map(stage.topology.edges.map(([a, b]) => [`${a}-${b}`, 1]));
+    if (phase !== "holding") {
+      const small = shrinking ? stage.topology : stage.sourceTopology;
+      const large = shrinking ? stage.sourceTopology : stage.topology;
+      const smallEdges = new Set(small.edges.map(([a, b]) => `${a}-${b}`));
+      const largeEdges = new Set(large.edges.map(([a, b]) => `${a}-${b}`));
+      const expansion = shrinking ? 1 - progress : progress;
+      const introduced = visibility.slice(stage.changedStart).some(value => value > 0);
+      const destinationEdges = motion === "grow" ? largeEdges : smallEdges;
+      const sourceEdges = motion === "grow" ? smallEdges : largeEdges;
+      const ready = new Set([...destinationEdges].filter(key => {
+        const [a, b] = key.split("-").map(Number);
+        return sourceEdges.has(key) || isBoundaryEdge(points, a, b);
+      }));
+      edges.clear();
+      for (const key of new Set([...smallEdges, ...largeEdges])) {
+        const [a, b] = key.split("-").map(Number);
+        const merged = [a, b].map(i => i < stage.changedStart ? i : stage.mergeTargets[i - stage.changedStart])
+          .sort((x, y) => x - y).join("-");
+        // Keep an existing edge until its successor reaches the surface;
+        // at convergence, draw only the single edge between surviving vertices.
+        const inherited = motion === "shrink" && destinationEdges.has(merged) && !ready.has(merged);
+        const opacity = destinationEdges.has(key) ? (ready.has(key) ? 1 : 0)
+          : inherited ? 1 : largeEdges.has(key) ? expansion : 1 - expansion;
+        const waiting = motion === "grow" && !smallEdges.has(key) && !introduced;
+        edges.set(key, !waiting && visibility[a] > 0 && visibility[b] > 0 ? opacity : 0);
+      }
     }
     const fromDepth = stage.fromDimension === 3 ? 1 : 0, toDepth = stage.dimension === 3 ? 1 : 0;
     return { stage, local, phase, progress, points, arrivals, visibility, emphasis, edges, depthReveal: fromDepth + (toDepth - fromDepth) * progress };
@@ -418,6 +460,50 @@ window.Geometry = (() => {
     return Math.max(5, 1 + copy.join(" ").trim().split(/\s+/).length / 2.5);
   }
 
+  function solidView(timeline, playback) {
+    let blend = 1;
+    const travel = -playback.direction, time = playback.time * travel;
+    // Windows span stage boundaries, including the pause after reverse removals.
+    for (const stage of timeline.stages) {
+      if (!stage.index) continue;
+      const movingStart = stage.start + stage.add;
+      const movingEnd = movingStart + stage.morph;
+      const shrinking = stage.direction === "shrink";
+      const focusStart = travel > 0 ? stage.start
+        : movingEnd + (shrinking ? stage.merge : 2.6);
+      const clearAt = travel > 0 ? movingStart : movingEnd;
+      const completeAt = travel > 0
+        ? movingEnd + (shrinking ? Math.min(stage.merge, (stage.seeds.length - 1) * 0.22 + 0.6) : 0)
+        : shrinking ? movingStart : stage.start + 0.4;
+      const focus = focusStart * travel, clear = clearAt * travel, complete = completeAt * travel;
+      const opacity = time < focus ? 1 : time < clear ? 1 - smooth((time - focus) / (clear - focus))
+        : time < complete ? 0 : smooth((time - complete) / 2.6);
+      blend = Math.min(blend, opacity);
+    }
+    return blend;
+  }
+
+  // Clip the eye ray against the convex solid. Depth alone cannot distinguish
+  // an exposed side corner from one hidden behind a front face.
+  function occluded(point, topology, points, camera) {
+    if (topology.faces.length < 4) return false;
+    const ray = sub(camera, point), epsilon = 1e-7;
+    let enter = 0, exit = 1;
+    for (const face of topology.faces) {
+      const distance = dot(face.normal, sub(point, points[face.ids[0]]));
+      const direction = dot(face.normal, ray);
+      if (Math.abs(direction) < epsilon) {
+        if (distance >= -epsilon) return false;
+        continue;
+      }
+      const t = -distance / direction;
+      if (direction < 0) enter = Math.max(enter, t);
+      else exit = Math.min(exit, t);
+      if (exit - enter <= epsilon) return false;
+    }
+    return exit > epsilon && exit - enter > epsilon;
+  }
+
   function sampleTimeline(timeline, playback) {
     const stage = timeline.stages.find(s => playback.time < s.start + s.duration)
       || timeline.stages[timeline.stages.length - 1];
@@ -463,19 +549,26 @@ window.Geometry = (() => {
     const increasing = paths[chapter].increasing;
     const copy = shapeComplete ? displayStage.shapeCaptions
       : playback.direction > 0 ? stage.reverseCaptions : stage.forwardCaptions;
-    return { ...frame, geometryPhase, phase, displayStage, targetStage, shapeComplete, node, position, chapter, increasing, paths, motion, focus, copy };
+    const viewBlend = frame.depthReveal * solidView(timeline, playback);
+    return { ...frame, geometryPhase, phase, displayStage, targetStage, shapeComplete, node, position, chapter, increasing, paths, motion, focus, copy, viewBlend };
   }
 
-  function redirectFrame(frame, source, progress) {
+  function redirectFrame(frame, source, progress, sourceEdges = frame.edges, sourceView = frame.viewBlend) {
     const routeBlend = smooth(progress);
+    const edges = new Map([...new Set([...sourceEdges.keys(), ...frame.edges.keys()])].map(key => {
+      const from = sourceEdges.get(key) || 0, to = frame.edges.get(key) || 0;
+      return [key, from + (to - from) * routeBlend];
+    }));
     return {
       ...frame,
       points: source.map((point, i) => lerp(point, frame.points[i], routeBlend)),
+      edges,
+      viewBlend: sourceView + (frame.viewBlend - sourceView) * routeBlend,
       phase: "moving", geometryPhase: "moving", shapeComplete: false, routeBlend
     };
   }
   return {
-    add, sub, scale, dot, cross, length, normalize, lerp, distance2, smooth, rotate, hull,
-    makeStages, sampleStage, makeTimeline, positionToTime, timeToPosition, advanceLoop, reverseLoop, sampleTimeline, redirectFrame, captionDuration
+    add, sub, scale, dot, cross, length, normalize, lerp, distance2, smooth, rotate, hull, isBoundaryEdge,
+    makeStages, sampleStage, makeTimeline, positionToTime, timeToPosition, advanceLoop, reverseLoop, sampleTimeline, redirectFrame, captionDuration, solidView, occluded
   };
 })();

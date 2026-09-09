@@ -61,8 +61,21 @@ receiving vertices. The top-right status badge names the displayed shape during
 viewing pauses. Intermediate surfaces are convex hulls of the moving vertices; they
 are not themselves Platonic solids. The wireframe blends only the source and
 destination edges, never temporary hull triangulation diagonals. Final faces
-are actual polygons. Original edges fade early during growth, and late during
-merging so changes in connectivity remain readable.
+are actual polygons. New destination edges appear at full normal brightness
+once their endpoints are visible and they become actual surface edges of the
+changing shape. Future diagonals across flat faces and chords through the
+interior are not introduced during highlighting or movement. Existing edges
+that will become destination edges stay visible until their successors reach
+the surface; coincident connections resolve into a single edge at convergence.
+Only outgoing connectivity fades throughout the movement, reaching zero at arrival.
+Shared edges stay at normal brightness. Mid-transition reversal blends edge
+visibility along with the vertex redirection, without a sudden brightness change.
+During the viewing pause, the solid becomes more opaque as vertex highlights
+recede. Occluded edges, vertices, and their glows remain only barely visible;
+exposed corners and silhouette edges retain their normal brightness.
+Focusing for the next transition smoothly restores the transparent view so
+the full construction is visible during movement. These opacity changes follow
+the timeline in either direction and remain continuous during a manual reversal.
 The timeline highlight and left-hand description and statistics stay with the
 last completed shape during introductions, morphs, and merges. They switch only
 when the next shape is complete, including after a mid-transition reversal.
@@ -97,9 +110,14 @@ reading pause as well.
   load starts muted. Use your device's volume controls to adjust loudness.
   Enabling music joins the current position and does not start a paused animation.
   Status text appears only while audio is starting or needs attention.
-- Drag to orbit; scroll to zoom. Dragging disables auto-orbit.
-- Focus the canvas and use arrow keys to orbit, plus/minus to zoom.
-- **Auto-orbit** toggles the slow camera movement during playback.
+- Drag in the object display area to orbit; scroll over that area to zoom.
+  Dragging disables auto-orbit. Swipes over the introductory text, shape
+  details, captions, or surrounding page scroll normally, including on phones
+  in landscape orientation.
+- Focus the object display area and use arrow keys to orbit, plus/minus to zoom.
+- **Auto-orbit** toggles the slow camera movement during playback. Its rotation
+  rate stays constant through 3D focusing, movement, defocusing, and viewing,
+  regardless of how many vertices are changing; Pace scales it with playback.
 - **Reset view** restores the starting camera and zoom.
 - **Expand** enters fullscreen if supported by the browser.
 
@@ -219,7 +237,8 @@ configuration change is needed; the new files publish with the other static file
 Open `tests.html` in a browser to run the geometry regression checks, including
 both orders and directions, midpoint and subsegment construction, merging,
 phase boundaries, centered positioning, repeated endpoint bounces, regular final
-faces, and the absence of temporary wireframe diagonals.
+faces, destination-edge visibility, focus/defocus opacity, perspective occlusion,
+and the absence of temporary wireframe diagonals.
 
 Open `music-tests.html` for parser rejection cases, all 28 completion/caption
 arrivals and their instrument layers, caption/scansion correspondence, expressive
@@ -227,7 +246,8 @@ note/rest lengths, distinct movement contours, prepared endpoint modulations,
 flute/string/percussion synthesis and cleanup, changed
 timeline durations, count-based intensity, every pace, repeated complete loops, capped-clock stalls, transport
 cancellation, and OfflineAudioContext sample/voice-cleanup checks. It also tests
-audio failure messages and desktop/narrow playback controls. HTTP hosting allows
+audio failure messages, desktop/narrow playback controls, actual hidden-geometry
+rendering, opacity-preserving reversals, and consistent auto-orbit. HTTP hosting allows
 the test page to inspect its application iframe; some browsers isolate `file:`
 iframes, so those control checks are explicitly skipped there. The actual
 application still works by opening `index.html` directly, without browser flags.

@@ -12,6 +12,14 @@ const assert = (condition, message) => { if (!condition) throw new Error(message
 const equal = (actual, expected, message) => assert(JSON.stringify(actual) === JSON.stringify(expected), message);
 const edgeKey = (a, b) => [a, b].sort((x, y) => x - y).join("-");
 const near = (a, b) => G.distance2(a, b) < 1e-16;
+const onSegment = (p, a, b) => {
+  const segment = G.sub(b, a), size = G.dot(segment, segment);
+  if (size < 1e-12) return false;
+  const t = G.dot(G.sub(p, a), segment) / size;
+  return t >= -1e-6 && t <= 1 + 1e-6 && G.distance2(p, G.lerp(a, b, t)) < 1e-12;
+};
+const onHullEdge = (points, hull, a, b) => hull.edges.some(([c, d]) =>
+  onSegment(points[a], points[c], points[d]) && onSegment(points[b], points[c], points[d]));
 const expected = {
   Point: [1, 0, 0, 0], Line: [2, 1, 0, 0], Triangle: [3, 3, 1, 3],
   Tetrahedron: [4, 6, 4, 3], Octahedron: [6, 12, 8, 3], Cube: [8, 12, 6, 4],
@@ -47,6 +55,12 @@ try {
     const spec = expected[stage.name], hull = G.hull(stage.target);
     equal([stage.target.length, hull.edges.length, hull.faces.length], spec.slice(0, 3), tag + " topology");
     assert(hull.faces.every(face => face.ids.length === spec[3]), tag + " polygon sizes");
+    for (let a = 0; a < stage.target.length; a++) {
+      for (let b = a + 1; b < stage.target.length; b++) {
+        assert(G.isBoundaryEdge(stage.target, a, b) === onHullEdge(stage.target, hull, a, b),
+          tag + " boundary classifier accepts real edges, not face diagonals or interior chords");
+      }
+    }
     if (stage.dimension >= 2) {
       const lengths = hull.edges.map(([a, b]) => G.length(G.sub(stage.target[a], stage.target[b])));
       assert(Math.max(...lengths) - Math.min(...lengths) < 1e-7, tag + " regular edges");
@@ -121,11 +135,98 @@ try {
       stage.mergeTargets.forEach((receiver, i) => assert(near(settled.points[stage.changedStart + i], settled.points[receiver]),
         tag + " removed points coincide with surviving vertices"));
     }
+    if (stage.index) {
+      const storedShrink = stage.direction === "shrink";
+      const small = new Set((storedShrink ? stage.topology : stage.sourceTopology).edges.map(([a, b]) => edgeKey(a, b)));
+      const large = new Set((storedShrink ? stage.sourceTopology : stage.topology).edges.map(([a, b]) => edgeKey(a, b)));
+      const changed = [...large].filter(key => !small.has(key));
+      const inheritedKey = key => key.split("-").map(Number)
+        .map(i => i < stage.changedStart ? i : stage.mergeTargets[i - stage.changedStart])
+        .sort((a, b) => a - b).join("-");
+      const boundary = (frame, key) => G.isBoundaryEdge(frame.points, ...key.split("-").map(Number));
+      assert(changed.some(key => key.split("-").some(id => Number(id) >= stage.changedStart)), tag + " exercises edges at changed vertices");
+      for (const motion of ["grow", "shrink"]) {
+        for (const elapsed of [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1]) {
+          const expansion = motion === "grow" ? elapsed : 1 - elapsed;
+          const local = stage.add + stage.morph * (storedShrink ? 1 - expansion : expansion);
+          const frame = G.sampleStage(stage, local, motion);
+          const growth = G.smooth(expansion);
+          for (const key of changed) {
+            const successor = inheritedKey(key);
+            const inherited = small.has(successor) && !large.has(successor) && !boundary(frame, successor);
+            const opacity = motion === "grow" ? (frame.phase === "holding" || boundary(frame, key) ? 1 : 0)
+              : inherited ? 1 : growth;
+            assert(Math.abs((frame.edges.get(key) || 0) - opacity) < 1e-8,
+              tag + " surface edges stay full; inherited edges hand off without a gap; outgoing edges fade");
+          }
+          for (const key of small) {
+            const expected = large.has(key) ? 1 : motion === "grow" ? 1 - growth
+              : frame.phase !== "holding" && boundary(frame, key) ? 1 : 0;
+            assert(Math.abs((frame.edges.get(key) || 0) - expected) < 1e-8,
+              tag + " new destination edges wait until their faces emerge");
+          }
+        }
+        for (const local of [0, stage.add, stage.add + stage.morph, stage.add + stage.morph + stage.merge]) {
+          const before = G.sampleStage(stage, Math.max(0, local - 1e-7), motion);
+          const after = G.sampleStage(stage, local + 1e-7, motion);
+          for (const key of new Set([...before.edges.keys(), ...after.edges.keys()])) {
+            if ((motion === "grow" ? large : small).has(key)) continue;
+            assert(Math.abs((before.edges.get(key) || 0) - (after.edges.get(key) || 0)) < 1e-6,
+              tag + " retiring edges remain continuous across phase boundaries");
+          }
+        }
+      }
+      for (const fraction of [0.05, 0.25, 0.5, 0.75, 0.95]) {
+        const local = storedShrink ? stage.add + stage.morph + stage.merge * fraction : stage.add * fraction;
+        const frame = G.sampleStage(stage, local, "grow");
+        for (const key of changed) {
+          const [a, b] = key.split("-").map(Number);
+          const introduced = frame.visibility.slice(stage.changedStart).some(value => value > 0);
+          const expected = introduced && frame.visibility[a] > 0 && frame.visibility[b] > 0 && boundary(frame, key) ? 1 : 0;
+          assert(Math.abs((frame.edges.get(key) || 0) - expected) < 1e-8,
+            tag + " new edges appear at full strength only along the surface, never before their endpoints");
+        }
+      }
+      const focusing = G.sampleStage(stage, storedShrink ? stage.add * 0.8 : stage.add + stage.morph + 1.3, "shrink");
+      equal([...focusing.edges].filter(([, opacity]) => opacity > 0).map(([key]) => key).sort(), [...large].sort(),
+        tag + " highlighting does not add future diagonals to the unchanged source solid");
+      for (const motion of ["grow", "shrink"]) {
+        const sourceEdges = motion === "grow" ? small : large;
+        const destinationEdges = motion === "grow" ? large : small;
+        for (const fraction of [0.1, 0.25, 0.5, 0.75, 0.9]) {
+          const frame = G.sampleStage(stage, stage.add + stage.morph * fraction, motion);
+          const surface = G.hull(frame.points);
+          for (const key of destinationEdges) {
+            if (sourceEdges.has(key)) continue;
+            const [a, b] = key.split("-").map(Number);
+            const belongs = onHullEdge(frame.points, surface, a, b);
+            assert(((frame.edges.get(key) || 0) > 0) === belongs,
+              tag + " new connections agree with independently reconstructed polygon boundaries");
+          }
+        }
+      }
+      const converged = G.sampleStage(stage, storedShrink ? stage.add + stage.morph : stage.add, "shrink");
+      equal([...converged.edges].filter(([, opacity]) => opacity > 0).map(([key]) => key).sort(), [...small].sort(),
+        tag + " convergence has exactly the final edges, with no duplicate connections");
+    }
     messages.push("PASS: " + tag + " - geometry, midpoints, motion, edges and phase boundaries");
   }
   const largeGrowth = stages.find(s => s.chapter === "faces" && s.name === "Dodecahedron");
   assert(largeGrowth.seeds.length === 14, "Octahedron to dodecahedron introduces 14 vertices");
   assert(largeGrowth.seeds.some(seed => seed.edge.some(i => i >= largeGrowth.previousCount)), "Repeated bisection is exercised");
+  const crossStage = stages.find(s => s.name === "Tetrahedron" && s.previousCount === 6);
+  const octahedronEdges = new Set(crossStage.sourceTopology.edges.map(([a, b]) => edgeKey(a, b)));
+  const interiorCross = crossStage.topology.edges.map(([a, b]) => edgeKey(a, b)).filter(key => !octahedronEdges.has(key));
+  assert(interiorCross.length === 2, "Octahedron-to-tetrahedron regression exercises both crossing chords");
+  for (const fraction of [0, 0.1, 0.25, 0.5, 0.75, 0.9]) {
+    const frame = G.sampleStage(crossStage, crossStage.add + crossStage.morph * fraction, "shrink");
+    for (const key of interiorCross) assert(frame.edges.get(key) === 0, "Interior octahedron cross is never drawn prematurely");
+  }
+  const square = [[-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0], [0, -1, 0], [0, 0, 0]];
+  assert(G.isBoundaryEdge(square, 0, 4) && G.isBoundaryEdge(square, 4, 1), "Midpoint subsegments of an existing boundary remain visible");
+  assert(!G.isBoundaryEdge(square, 0, 2) && !G.isBoundaryEdge(square, 0, 5), "Planar diagonals and interior spokes are not boundary edges");
+  assert(G.isBoundaryEdge([[-1, 0, 0], [1, 0, 0], [0, 0, 0]], 0, 2), "Line bisection remains visible before opening into a triangle");
+  assert(!G.isBoundaryEdge([[0, 0, 0], [0, 0, 0]], 0, 1), "Coincident points do not introduce a zero-length edge");
   const duration = stages.reduce((sum, stage) => sum + stage.duration, 0);
   messages.push("PASS: 14-vertex growth bisects existing subsegments; duration " + duration.toFixed(2) + " seconds");
 
@@ -144,6 +245,8 @@ try {
       const frame = G.sampleTimeline(timeline, { time: node.time, direction });
       assert(frame.phase === "holding", "Node click lands on a viewing pause");
       assert(frame.node.index === node.index, "Node click selects the correct solid");
+      assert(Math.abs(frame.viewBlend - (node.stage.dimension === 3 ? 1 : 0)) < 1e-10,
+        "Seeking to a viewing pause gives an opaque solid, or unchanged planar geometry");
     }
   }
   let playback = { time: timeline.center.time, direction: 1, elapsed: 0 };
@@ -167,6 +270,7 @@ try {
       equal(a.points, b.points, "Manual reverse preserves exact geometry");
       equal(a.visibility, b.visibility, "Manual reverse preserves point visibility");
       equal([...a.edges], [...b.edges], "Manual reverse preserves the wireframe");
+      assert(Math.abs(a.viewBlend - b.viewBlend) < 1e-10, "Manual reverse during a settled pause preserves solidity");
       const advanced = G.advanceLoop(timeline, after, 0.1);
       assert(advanced.time >= timeline.minTime && advanced.time <= timeline.maxTime, "Manual reversal respects endpoint bounces");
     }
@@ -187,6 +291,8 @@ try {
   for (let elapsed = 0; elapsed <= timeline.period; elapsed += 0.05) {
     const state = G.advanceLoop(timeline, playback, elapsed);
     const frame = G.sampleTimeline(timeline, state);
+    assert(Number.isFinite(frame.viewBlend) && frame.viewBlend >= 0 && frame.viewBlend <= 1, "Bounded solid opacity");
+    if (frame.phase === "moving") assert(frame.viewBlend === 0, "Morphs always use the transparent default");
     equal(frame.paths.vertices.label, state.direction > 0 ? "Increasing vertices \u2192" : "\u2190 Decreasing vertices",
       "Vertex heading follows travel direction");
     equal(frame.paths.faces.label, state.direction > 0 ? "Decreasing faces \u2192" : "\u2190 Increasing faces",
@@ -203,6 +309,7 @@ try {
     const original = G.sampleStage(frame.stage, state.time - frame.stage.start, frame.motion);
     assert(frame.points.every((p, i) => near(p, original.points[i])), "Playback uses the correct addition or removal route");
     equal(frame.visibility, original.visibility, "Playback preserves arrival and removal timing");
+    equal([...frame.edges], [...original.edges], "Both timeline directions use the correct full-motion edge fades");
     if (frame.motion === "shrink") {
       frame.stage.mergeTargets.forEach((receiver, i) => {
         const id = frame.stage.changedStart + i;
@@ -259,13 +366,75 @@ try {
         assert(Math.abs(distance - expectedDistance) < 1e-8, "Removed vertices converge continuously on their moving receivers");
       });
     }
+    for (const stage of stages.slice(1)) {
+      for (const direction of [-1, 1]) {
+        const travel = -direction, shrink = stage.direction === "shrink";
+        const movingStart = stage.start + stage.add, movingEnd = movingStart + stage.morph;
+        const focus = direction < 0 ? stage.start : movingEnd + (shrink ? stage.merge : 2.6);
+        const clear = direction < 0 ? movingStart : movingEnd;
+        const complete = direction < 0
+          ? movingEnd + (shrink ? Math.min(stage.merge, (stage.seeds.length - 1) * 0.22 + 0.6) : 0)
+          : shrink ? movingStart : stage.start + 0.4;
+        for (const fraction of [0, 0.25, 0.5, 0.75, 1]) {
+          const focusing = G.solidView(timeline, { time: focus + (clear - focus) * fraction, direction });
+          const admiring = G.solidView(timeline, { time: complete + travel * 2.6 * fraction, direction });
+          assert(Math.abs(focusing - (1 - G.smooth(fraction))) < 1e-10, "Focusing smoothly restores transparency");
+          assert(Math.abs(admiring - G.smooth(fraction)) < 1e-10, "Defocusing smoothly restores solidity after growth and removal");
+        }
+        for (const time of [stage.start, focus, clear, complete, complete + travel * 2.6,
+          movingStart, movingEnd, movingEnd + stage.merge, stage.start + stage.duration]) {
+          const before = G.sampleTimeline(timeline, { time: time - 1e-7, direction });
+          const after = G.sampleTimeline(timeline, { time: time + 1e-7, direction });
+          assert(Math.abs(before.viewBlend - after.viewBlend) < 1e-6, "Solidity stays continuous across stage and phase boundaries");
+        }
+        const time = complete + travel * 1.3;
+        const before = G.sampleTimeline(timeline, { time, direction });
+        const after = G.sampleTimeline(timeline, { time, direction: -direction });
+        for (const progress of [0, 0.25, 0.5, 0.75, 1]) {
+          const redirected = G.redirectFrame(after, before.points, progress, before.edges, before.viewBlend);
+          const expected = before.viewBlend + (after.viewBlend - before.viewBlend) * G.smooth(progress);
+          assert(Math.abs(redirected.viewBlend - expected) < 1e-10, "Mid-defocus reversal blends from the exact displayed opacity");
+        }
+      }
+    }
+    const cube = [];
+    for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) cube.push([x, y, z]);
+    const box = G.hull(cube), eye = [0, 0, 6.5];
+    for (const point of cube) assert(G.occluded(point, box, cube, eye) === (point[2] < 0), "Only rear cube vertices are occluded head-on");
+    for (const point of [[0, 0, 0], [0, 0, -2], [0, -1, -1]]) {
+      assert(G.occluded(point, box, cube, eye), "Interior and rear points and edges are hidden by faces");
+    }
+    for (const point of [[0, 0, 1], [0, 0, 2], [3, 0, 0], [0, 1, 1]]) {
+      assert(!G.occluded(point, box, cube, eye), "Front faces, front edges, and points outside the silhouette remain exposed");
+    }
+    assert(!G.occluded([1, 0, -1], box, cube, [1, 0, 6.5]), "Tangent rays keep silhouette edges visible");
+    assert(!G.occluded([1, 1, -1], box, cube, [6.5, 0, 0]), "A negative-z corner is visible from the side");
+    for (const stage of stages.filter(s => s.dimension === 3)) {
+      for (const [yaw, pitch] of [[0, 0], [0.8, -0.43], [1.7, 0.6], [2.9, -1.1], [-2.2, 0.2]]) {
+        const camera = G.rotate(G.rotate(eye, 0, -pitch), -yaw, 0);
+        assert(near(G.rotate(camera, yaw, pitch), eye), "Occlusion camera inverts the actual perspective view");
+        for (const ids of [...stage.target.map((_, i) => [i]), ...stage.topology.edges]) {
+          const point = ids.length === 1 ? stage.target[ids[0]] : G.lerp(stage.target[ids[0]], stage.target[ids[1]], 0.5);
+          const exposed = stage.topology.faces.some(face => ids.every(id => face.ids.includes(id))
+            && G.dot(face.normal, G.sub(camera, stage.target[face.ids[0]])) > 1e-7);
+          assert(G.occluded(point, stage.topology, stage.target, camera) === !exposed,
+            stage.name + " perspective occlusion matches its actual front-facing incident faces");
+        }
+      }
+    }
     const before = G.sampleTimeline(timeline, { time: stage.start + stage.add + stage.morph / 2, direction });
     const after = G.sampleTimeline(timeline, { time: stage.start + stage.add + stage.morph / 2, direction: -direction });
-    const turnStart = G.redirectFrame(after, before.points, 0);
-    const turnEnd = G.redirectFrame(after, before.points, 1);
+    const turnStart = G.redirectFrame(after, before.points, 0, before.edges);
+    const turnEnd = G.redirectFrame(after, before.points, 1, before.edges);
     equal(turnStart.points, before.points, "Mid-transition reversal begins at the displayed positions");
     assert(turnEnd.points.every((p, i) => near(p, after.points[i])), "Mid-transition reversal joins the new route");
     equal(turnStart.visibility, before.visibility, "No vertex disappears during redirection");
+    for (const key of new Set([...before.edges.keys(), ...after.edges.keys()])) {
+      assert(Math.abs((turnStart.edges.get(key) || 0) - (before.edges.get(key) || 0)) < 1e-10,
+        "Manual reversal starts at the exact displayed edge opacity");
+      assert(Math.abs((turnEnd.edges.get(key) || 0) - (after.edges.get(key) || 0)) < 1e-10,
+        "Manual reversal smoothly joins the new edge-opacity route");
+    }
     assert(!turnStart.shapeComplete && !turnEnd.shapeComplete, "Redirecting does not prematurely change completed-shape labels");
     assert(!startsWithObjectName(turnStart.copy[0]), "Mid-transition reversal keeps a transition caption");
     equal(turnStart.copy, after.copy, "Redirection uses the newly selected transition's caption");
@@ -278,6 +447,10 @@ try {
   messages.push("PASS: removals meet surviving vertices before fading in both directions; midpoint additions are unchanged; mid-transition reversals redirect smoothly");
   messages.push("PASS: details change only on completion; fixed Platonic Solid I-V labels; every uninterrupted caption meets its reading budget");
   messages.push("PASS: all eight objects have name-led captions; all 28 directed timeline transitions have stable, direction-specific descriptions and subtexts");
+  messages.push("PASS: destination edges appear at full strength; only outgoing edges fade over the morph; reversal blends from the displayed brightness");
+  messages.push("PASS: new edges wait for actual surface boundaries; no premature cube diagonals or octahedron interior cross; merge handoffs leave no duplicates");
+  messages.push("PASS: focus/defocus opacity ramps in both directions, across stage boundaries and mid-ramp reversals, without changing completion timing");
+  messages.push("PASS: perspective occlusion on every solid, including rear vertices, edges, interior points, exposed side corners, and silhouettes");
   document.getElementById("results").textContent = messages.join("\n");
   document.documentElement.dataset.result = "passed";
 } catch (error) {

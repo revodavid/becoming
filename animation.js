@@ -6,6 +6,7 @@
   const redirectDuration = 1.5;
   const $ = id => document.getElementById(id);
   const canvas = $("scene"), ctx = canvas.getContext("2d");
+  const interaction = $("scene-interaction");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const state = {
     time: timeline.center.time, direction: 1, elapsed: 0,
@@ -124,8 +125,12 @@
     const before = sample();
     Object.assign(state, G.reverseLoop(timeline, state));
     const after = G.sampleTimeline(timeline, state);
-    state.redirect = before.points.some((point, i) => before.visibility[i] > 0 && G.distance2(point, after.points[i]) > 1e-12)
-      ? { points: before.points, elapsed: 0 } : null;
+    const moved = before.points.some((point, i) => before.visibility[i] > 0 && G.distance2(point, after.points[i]) > 1e-12);
+    const faded = [...new Set([...before.edges.keys(), ...after.edges.keys()])]
+      .some(key => Math.abs((before.edges.get(key) || 0) - (after.edges.get(key) || 0)) > 1e-12);
+    const shaded = Math.abs(before.viewBlend - after.viewBlend) > 1e-12;
+    state.redirect = moved || faded || shaded
+      ? { points: before.points, edges: before.edges, viewBlend: before.viewBlend, elapsed: 0 } : null;
     state.lastFrame = null;
     updateLabels(sample());
     syncMusic(true);
@@ -167,14 +172,15 @@
   });
 
   let pointer = null;
-  canvas.addEventListener("pointerdown", event => {
+  interaction.addEventListener("pointerdown", event => {
     if (pointer !== null || (event.pointerType === "mouse" && event.button !== 0)) return;
     pointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
     state.dragging = true;
-    canvas.setPointerCapture(event.pointerId);
+    interaction.setPointerCapture(event.pointerId);
+    interaction.focus({ preventScroll: true });
     setOrbit(false);
   });
-  canvas.addEventListener("pointermove", event => {
+  interaction.addEventListener("pointermove", event => {
     if (!pointer || pointer.id !== event.pointerId) return;
     state.yaw += (event.clientX - pointer.x) * 0.007;
     state.pitch = Math.max(-1.35, Math.min(1.35, state.pitch + (event.clientY - pointer.y) * 0.007));
@@ -186,14 +192,14 @@
     pointer = null;
     state.dragging = false;
   }
-  canvas.addEventListener("pointerup", releasePointer);
-  canvas.addEventListener("pointercancel", releasePointer);
-  canvas.addEventListener("lostpointercapture", releasePointer);
-  canvas.addEventListener("wheel", event => {
+  interaction.addEventListener("pointerup", releasePointer);
+  interaction.addEventListener("pointercancel", releasePointer);
+  interaction.addEventListener("lostpointercapture", releasePointer);
+  interaction.addEventListener("wheel", event => {
     event.preventDefault();
     state.zoom = Math.max(0.65, Math.min(1.55, state.zoom * Math.exp(-event.deltaY * 0.001)));
   }, { passive: false });
-  canvas.addEventListener("keydown", event => {
+  interaction.addEventListener("keydown", event => {
     if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
       event.preventDefault();
       setOrbit(false);
@@ -229,7 +235,8 @@
 
   function sample() {
     const frame = G.sampleTimeline(timeline, state);
-    return state.redirect ? G.redirectFrame(frame, state.redirect.points, state.redirect.elapsed / redirectDuration) : frame;
+    return state.redirect ? G.redirectFrame(frame, state.redirect.points, state.redirect.elapsed / redirectDuration,
+      state.redirect.edges, state.redirect.viewBlend) : frame;
   }
 
   function updateLabels(frame) {
@@ -286,11 +293,12 @@
     const mobile = w <= 640;
     const center = [w * (mobile ? 0.5 : 0.625), h * (mobile ? 0.385 : 0.43)];
     const unit = Math.min(h * (mobile ? 0.125 : 0.225), w * (mobile ? 0.225 : 0.17)) * state.zoom;
-    const { stage, geometryPhase: phase, points, progress, local, depthReveal } = frame;
+    const { stage, geometryPhase: phase, points, progress, local, depthReveal, viewBlend } = frame;
     // Open to an oblique view so depth motion is visible, then return face-on to the plane.
     const orbitYaw = Math.atan2(Math.sin(state.orbitAngle), Math.cos(state.orbitAngle));
     const yaw = state.yaw + (orbitYaw - 0.7) * depthReveal;
     const pitch = state.pitch - 0.55 * depthReveal;
+    const camera = G.rotate(G.rotate([0, 0, 6.5], 0, -pitch), -yaw, 0);
     const project = p => {
       const rotated = G.rotate(p, yaw, pitch);
       const perspective = 6.5 / (6.5 - rotated[2]);
@@ -337,16 +345,21 @@
     }
     const faceDepth = face => face.ids.reduce((sum, i) => sum + projected[i].z, 0) / face.ids.length;
     const faces = [...topology.faces].sort((a, b) => faceDepth(a) - faceDepth(b));
+    const exposure = point => viewBlend > 0 && G.occluded(point, topology, points, camera) ? 1 - 0.96 * viewBlend : 1;
     for (const face of faces) {
       const normal = G.rotate(face.normal, yaw, pitch);
       const light = Math.max(0, G.dot(normal, G.normalize([-0.4, 0.6, 1])));
+      const front = G.dot(face.normal, G.sub(camera, points[face.ids[0]])) > 0;
+      const transparent = front ? 0.105 + light * 0.095 : 0.03;
+      const opaque = front ? 0.9 + light * 0.04 : 0.13;
+      const alpha = transparent + (opaque - transparent) * viewBlend;
       ctx.beginPath();
       face.ids.forEach((id, i) => {
         const p = projected[id];
         if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
       });
       ctx.closePath();
-      ctx.fillStyle = `rgba(${Math.round(87 + light * 52)},${Math.round(135 + light * 46)},${Math.round(101 + light * 39)},${normal[2] > 0 ? 0.105 + light * 0.095 : 0.03})`;
+      ctx.fillStyle = `rgba(${Math.round(87 + light * 52)},${Math.round(135 + light * 46)},${Math.round(101 + light * 39)},${alpha})`;
       ctx.fill();
     }
 
@@ -357,25 +370,9 @@
       const depth = (pa.z + pb.z) * 0.5;
       const front = Math.max(0, Math.min(1, (depth + 1.48) / 2.96));
       ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y);
-      ctx.strokeStyle = rgba(colors.green, (0.23 + front * 0.57) * opacity);
-      ctx.lineWidth = (0.8 + front * 0.65) * opacity;
+      ctx.strokeStyle = rgba(colors.green, (0.23 + front * 0.57) * opacity * exposure(G.lerp(points[a], points[b], 0.5)));
+      ctx.lineWidth = 0.8 + front * 0.65;
       ctx.stroke();
-    }
-
-    if (frame.phase === "adding" && frame.motion === "grow") {
-      stage.seeds.forEach((seed, i) => {
-        const id = stage.changedStart + i;
-        const visible = frame.visibility[id];
-        if (visible <= 0) return;
-        const ends = seed.edge || [];
-        ctx.strokeStyle = rgba(colors.gold, 0.36 * visible);
-        ctx.lineWidth = 1.4;
-        const p = projected[id];
-        for (const end of ends) {
-          const q = projected[end];
-          ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
-        }
-      });
     }
 
     const sourceSize = stage.previousCount === 1 ? 5 : 3.2;
@@ -386,19 +383,20 @@
       const seedIndex = p.i - stage.changedStart;
       const visible = frame.visibility[p.i];
       if (visible <= 0) continue;
+      const alpha = visible * exposure(points[p.i]);
       const gold = frame.emphasis[p.i];
       const rgb = G.lerp(colors.green, colors.gold, gold).map(Math.round);
       const size = (pointSize + gold * 1.2) * p.perspective;
       const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, size * (gold ? 6 : 4));
-      glow.addColorStop(0, rgba(rgb, 0.28 * visible));
+      glow.addColorStop(0, rgba(rgb, 0.28 * alpha));
       glow.addColorStop(1, rgba(rgb, 0));
       ctx.fillStyle = glow;
       ctx.beginPath(); ctx.arc(p.x, p.y, size * (gold ? 6 : 4), 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = rgba(rgb, (0.72 + 0.28 * Math.min(1, (p.z + 1.5) / 3)) * visible);
+      ctx.fillStyle = rgba(rgb, (0.72 + 0.28 * Math.min(1, (p.z + 1.5) / 3)) * alpha);
       ctx.beginPath(); ctx.arc(p.x, p.y, size * visible, 0, Math.PI * 2); ctx.fill();
       if (gold > 0) {
         const pulse = reducedMotion.matches ? 0.5 : (Math.sin(local * 2.8 - seedIndex * 0.7) + 1) / 2;
-        ctx.strokeStyle = rgba(colors.gold, (0.24 + pulse * 0.22) * visible * gold);
+        ctx.strokeStyle = rgba(colors.gold, (0.24 + pulse * 0.22) * alpha * gold);
         ctx.lineWidth = 1;
         ctx.beginPath(); ctx.arc(p.x, p.y, size + 6 + pulse * 4, 0, Math.PI * 2); ctx.stroke();
       }
@@ -421,9 +419,8 @@
         if (remaining > 0) Object.assign(state, G.advanceLoop(timeline, state, remaining));
       }
       const frame = sample();
-      if (state.orbit && state.playing && !state.dragging && frame.stage.fromDimension === 3 && frame.stage.dimension === 3) {
-        const orbitSpeed = ["adding", "highlighting", "merging"].includes(frame.phase) ? 0.018 : frame.phase === "moving" ? 0.065 : 0.14;
-        state.orbitAngle += dt * state.speed * orbitSpeed;
+      if (state.orbit && state.playing && !state.dragging && frame.depthReveal === 1) {
+        state.orbitAngle += dt * state.speed * 0.14;
       }
       updateLabels(frame);
       draw(frame);
